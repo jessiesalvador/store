@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FreshCart Store</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <header class="site-header">
+      <div class="brand-block" aria-label="Store shop page">
+        <div class="brand-mark" aria-hidden="true">FC</div>
+        <div>
+          <p class="eyebrow">Store shop page</p>
+          <h1 id="store-page-name">Store</h1>
+        </div>
+      </div>
+      <nav class="role-tabs" aria-label="User areas">
+        <a class="role-tab" href="admin.html">Store admin</a>
+        <a class="role-tab" href="super-admin.html">Super admin</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="shop-layout store-shop-layout" aria-labelledby="store-title">
+        <aside class="filters" aria-labelledby="store-filter-title">
+          <h2 id="store-filter-title">Shop this store</h2>
+          <p class="helper-text" id="store-location"></p>
+          <label>
+            Search items
+            <input id="store-search-input" type="search" placeholder="Search this store..." autocomplete="off">
+          </label>
+          <div>
+            <p class="label-text">Category</p>
+            <div class="category-list" id="store-category-filters" role="list"></div>
+          </div>
+        </aside>
+
+        <section class="products-panel" aria-labelledby="store-title">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow" id="store-result-count">0 items</p>
+              <h2 id="store-title">Store groceries</h2>
+            </div>
+          </div>
+          <div class="product-grid" id="store-product-grid" aria-live="polite"></div>
+        </section>
+
+        <aside class="cart" aria-labelledby="store-cart-title">
+          <div class="section-head tight">
+            <h2 id="store-cart-title">Cart</h2>
+            <span class="cart-count" id="store-cart-count">0</span>
+          </div>
+          <div id="store-cart-items" class="cart-items"></div>
+          <dl class="cart-total">
+            <div>
+              <dt>Subtotal</dt>
+              <dd id="store-subtotal">$0.00</dd>
+            </div>
+            <div class="grand-total">
+              <dt>Total</dt>
+              <dd id="store-grand-total">$0.00</dd>
+            </div>
+          </dl>
+          <button class="checkout-button send-order-button" id="store-send-order-button" type="button" disabled>Send order</button>
+          <button class="checkout-button" type="button" disabled>Pay securely</button>
+        </aside>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="data-store.js"></script>
+    <script src="store.js"></script>
+  </body>
+</html>

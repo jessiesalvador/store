@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FreshCart Super Admin</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <header class="site-header">
+      <div class="brand-block" aria-label="FreshCart Super Admin">
+        <div class="brand-mark" aria-hidden="true">FC</div>
+        <div>
+          <p class="eyebrow">Protected platform portal</p>
+          <h1>Super admin</h1>
+        </div>
+      </div>
+      <nav class="role-tabs" aria-label="User areas">
+        <a class="role-tab" href="admin.html">Store admin</a>
+        <a class="role-tab active" href="super-admin.html">Super admin</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="auth-panel panel" id="super-login-panel" aria-labelledby="super-login-title">
+        <p class="eyebrow">Sign in required</p>
+        <h2 id="super-login-title">Super admin access</h2>
+        <form class="stacked-form" id="super-login-form">
+          <label>
+            Email
+            <input name="email" type="email" autocomplete="email" required>
+          </label>
+          <label>
+            Password
+            <input name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit">Sign in</button>
+        </form>
+      </section>
+
+      <section class="portal-content hidden" id="super-content" aria-labelledby="super-title">
+        <div class="admin-grid">
+          <section class="panel">
+            <p class="eyebrow">Super admin</p>
+            <h2 id="super-title">Add admins and stores</h2>
+            <form id="admin-form" class="stacked-form">
+              <label>
+                Admin name
+                <input name="adminName" autocomplete="name" required>
+              </label>
+              <label>
+                Email
+                <input name="email" type="email" autocomplete="email" required>
+              </label>
+              <label>
+                Assign store
+                <select name="storeId" id="admin-store-select" required></select>
+              </label>
+              <button type="submit">Grant admin access</button>
+            </form>
+          </section>
+
+          <section class="panel">
+            <h2>Add store</h2>
+            <form id="store-form" class="stacked-form">
+              <label>
+                Store name
+                <input name="storeName" autocomplete="organization" required>
+              </label>
+              <label>
+                City or branch
+                <input name="location" placeholder="Downtown" required>
+              </label>
+              <button type="submit">Add store</button>
+            </form>
+          </section>
+
+          <section class="panel wide">
+            <div class="section-head">
+              <div>
+                <h2>Approved access</h2>
+                <p class="helper-text">Share this temporary login with the new admin.</p>
+              </div>
+            </div>
+            <div id="approval-result" class="approval-result hidden" aria-live="polite"></div>
+          </section>
+
+          <section class="panel wide">
+            <div class="section-head">
+              <h2>Owner requests</h2>
+              <span id="request-count" class="status-pill">0 pending</span>
+            </div>
+            <div id="requests-list" class="request-list" aria-live="polite"></div>
+          </section>
+
+          <section class="panel wide">
+            <div class="section-head">
+              <h2>Stores</h2>
+              <span id="store-count" class="status-pill">0 stores</span>
+            </div>
+            <div id="store-list" class="store-list" aria-live="polite"></div>
+          </section>
+
+          <section class="panel wide">
+            <div class="section-head">
+              <h2>Approved admins</h2>
+              <span id="admin-count" class="status-pill">0 admins</span>
+            </div>
+            <div id="admin-list" class="people-list"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="data-store.js"></script>
+    <script src="super-admin.js"></script>
+  </body>
+</html>

@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FreshCart Store Admin</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <header class="site-header">
+      <div class="brand-block" aria-label="FreshCart Store Admin">
+        <div class="brand-mark" aria-hidden="true">FC</div>
+        <div>
+          <p class="eyebrow">Protected store portal</p>
+          <h1>Store admin</h1>
+        </div>
+      </div>
+      <nav class="role-tabs" aria-label="User areas">
+        <a class="role-tab" id="admin-shop-link" href="store.html?store=green-valley">My shop</a>
+        <a class="role-tab active" href="admin.html">Store admin</a>
+        <a class="role-tab" href="super-admin.html">Super admin</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="auth-panel panel" id="admin-login-panel" aria-labelledby="admin-login-title">
+        <p class="eyebrow">Sign in required</p>
+        <h2 id="admin-login-title">Store admin access</h2>
+        <form class="stacked-form" id="admin-login-form">
+          <label>
+            Email
+            <input name="email" type="email" autocomplete="email" required>
+          </label>
+          <label>
+            Password
+            <input name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit">Sign in</button>
+        </form>
+      </section>
+
+      <section class="portal-content hidden" id="admin-content" aria-labelledby="admin-title">
+        <div class="admin-grid">
+          <section class="panel">
+            <p class="eyebrow">FreshCart owner tools</p>
+            <h2 id="admin-title">Manage categories and grocery items</h2>
+            <label>
+              Active store
+              <select id="admin-store"></select>
+            </label>
+            <form id="category-form" class="inline-form">
+              <label>
+                New category
+                <input name="categoryName" placeholder="Bakery" required>
+              </label>
+              <button type="submit">Add category</button>
+            </form>
+            <div class="mini-section" aria-labelledby="admin-categories-title">
+              <h3 id="admin-categories-title">Categories in this store</h3>
+              <div class="category-summary" id="admin-category-list"></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h2>Add item</h2>
+            <form id="item-form" class="stacked-form">
+              <label>
+                Item name
+                <input name="itemName" placeholder="Organic bananas" required>
+              </label>
+              <label>
+                Category
+                <select name="itemCategory" id="item-category" required></select>
+              </label>
+              <label>
+                Price
+                <input name="price" type="number" min="0.01" step="0.01" placeholder="4.50" required>
+              </label>
+              <label>
+                Item photo
+                <input name="photo" type="file" accept="image/*" required>
+              </label>
+              <p class="helper-text">Upload a product photo from your device.</p>
+              <button type="submit">Add grocery item</button>
+            </form>
+          </section>
+
+          <section class="panel wide">
+            <div class="section-head">
+              <div>
+                <h2>Received orders</h2>
+                <p class="helper-text">Orders sent to the store admin email address appear here.</p>
+              </div>
+              <span id="order-count" class="status-pill">0 orders</span>
+            </div>
+            <label class="order-archive-toggle">
+              <input id="show-archived-orders" type="checkbox">
+              Show archived orders
+            </label>
+            <div id="order-list" class="order-list" aria-live="polite"></div>
+          </section>
+
+          <section class="panel wide">
+            <div class="section-head">
+              <div>
+                <h2>Current inventory</h2>
+                <p class="helper-text">Select a category to manage existing items.</p>
+              </div>
+              <span id="inventory-count" class="status-pill">0 items</span>
+            </div>
+            <label class="inventory-filter">
+              Inventory category
+              <select id="inventory-category-filter"></select>
+            </label>
+            <div class="inventory-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th scope="col">Photo</th>
+                    <th scope="col">Item</th>
+                    <th scope="col">Category</th>
+                    <th scope="col">Price</th>
+                    <th scope="col">Sold out</th>
+                    <th scope="col">Replace photo</th>
+                    <th scope="col">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="inventory-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="data-store.js"></script>
+    <script src="admin.js"></script>
+  </body>
+</html>
