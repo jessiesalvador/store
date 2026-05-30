@@ -1,0 +1,163 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>FreshCart Super Admin</title>
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to main content</a>
+    <header class="site-header">
+      <div class="brand-block" aria-label="FreshCart Super Admin">
+        <div class="brand-mark" aria-hidden="true">JS</div>
+        <div>
+          <p class="eyebrow">Protected platform portal</p>
+          <h1>Super admin</h1>
+        </div>
+      </div>
+      <nav class="role-tabs" aria-label="User areas">
+        <a class="role-tab" href="admin.html">Store admin</a>
+        <a class="role-tab active" href="super-admin.html">Super admin</a>
+        <button class="role-tab logout-button hidden" id="super-logout-button" type="button">Log out</button>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="auth-panel panel" id="super-login-panel" aria-labelledby="super-login-title">
+        <p class="eyebrow">Sign in required</p>
+        <h2 id="super-login-title">Super admin access</h2>
+        <form class="stacked-form" id="super-login-form">
+          <label>
+            Email
+            <input name="email" type="email" autocomplete="email" required>
+          </label>
+          <label>
+            Password
+            <input name="password" type="password" autocomplete="current-password" required>
+          </label>
+          <button type="submit">Sign in</button>
+          <button class="text-button" id="super-forgot-password-button" type="button">Forgot password?</button>
+        </form>
+      </section>
+
+      <section class="portal-content hidden" id="super-content" aria-labelledby="super-title">
+        <div class="admin-grid">
+          <section class="panel">
+            <p class="eyebrow">Super admin</p>
+            <h2 id="super-title">Add admins and stores</h2>
+            <form id="admin-form" class="stacked-form">
+              <label>
+                Admin name
+                <input name="adminName" autocomplete="name" required>
+              </label>
+              <label>
+                Email
+                <input name="email" type="email" autocomplete="email" required>
+              </label>
+              <label>
+                Assign store
+                <select name="storeId" id="admin-store-select" required></select>
+              </label>
+              <button type="submit">Grant admin access</button>
+            </form>
+          </section>
+
+          <section class="panel">
+            <h2>Add store</h2>
+            <form id="store-form" class="stacked-form">
+              <label>
+                Store name
+                <input name="storeName" autocomplete="organization" required>
+              </label>
+              <label>
+                City or branch
+                <input name="location" placeholder="Downtown" required>
+              </label>
+              <button type="submit">Add store</button>
+            </form>
+          </section>
+
+          <section class="panel wide">
+            <div class="section-head">
+              <div>
+                <h2>Approved access</h2>
+                <p class="helper-text">Share this temporary login with the new admin.</p>
+              </div>
+            </div>
+            <div id="approval-result" class="approval-result hidden" aria-live="polite"></div>
+          </section>
+
+          <section class="panel wide">
+            <div class="section-head">
+              <h2>Owner requests</h2>
+              <span id="request-count" class="status-pill">0 pending</span>
+            </div>
+            <div id="requests-list" class="request-list" aria-live="polite"></div>
+          </section>
+
+          <section class="panel wide">
+            <div class="section-head">
+              <h2>Stores</h2>
+              <span id="store-count" class="status-pill">0 stores</span>
+            </div>
+            <div id="store-list" class="store-list" aria-live="polite"></div>
+          </section>
+
+          <section class="panel wide">
+            <div class="section-head">
+              <h2>Approved admins</h2>
+              <span id="admin-count" class="status-pill">0 admins</span>
+            </div>
+            <div id="admin-list" class="people-list"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+    <!-- Forgot password modal -->
+    <dialog id="forgot-password-modal" class="change-password-modal" aria-labelledby="forgot-password-title">
+      <div class="modal-inner">
+        <p class="eyebrow">Account help</p>
+        <h2 id="forgot-password-title">Reset your password</h2>
+        <p class="helper-text">Enter your admin email and we'll send a reset link if the account exists.</p>
+        <form id="forgot-password-form" class="stacked-form">
+          <label>
+            Email
+            <input id="forgot-password-email" name="email" type="email" autocomplete="email" required>
+          </label>
+          <p class="password-error hidden" id="forgot-password-message" role="alert"></p>
+          <div class="modal-actions">
+            <button type="button" class="ghost-button" id="forgot-password-cancel">Cancel</button>
+            <button type="submit">Send reset link</button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
+    <!-- Reset password modal -->
+    <dialog id="reset-password-modal" class="change-password-modal" aria-labelledby="reset-password-title">
+      <div class="modal-inner">
+        <p class="eyebrow">Password reset</p>
+        <h2 id="reset-password-title">Choose a new password</h2>
+        <p class="helper-text">Set a new password for your FreshCart admin account.</p>
+        <form id="reset-password-form" class="stacked-form">
+          <label>
+            New password
+            <input id="reset-new-password" name="newPassword" type="password" autocomplete="new-password" minlength="8" required>
+          </label>
+          <label>
+            Confirm password
+            <input id="reset-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required>
+          </label>
+          <p class="password-error hidden" id="reset-password-message" role="alert"></p>
+          <button type="submit">Set new password</button>
+        </form>
+      </div>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    
+    <script src="api.js"></script>
+    <script src="super-admin.js"></script>
+  </body>
+</html>
