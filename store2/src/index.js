@@ -23,6 +23,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const frontendDir = path.join(__dirname, "../../store");
 
+// Render terminates HTTPS before requests reach Express. Trusting the first
+// proxy lets secure cookies work correctly in production.
+app.set("trust proxy", 1);
+
 // ─── Security headers ─────────────────────────────────────────────────────────
 app.use(
   helmet({
