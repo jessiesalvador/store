@@ -42,29 +42,33 @@ router.post("/", requireSuperAdmin, async (req, res, next) => {
 
     const tempPassword = generateTempPassword();
 
-    // passwordHash field holds plaintext here — the pre-save hook hashes it
-    const admin = await User.create({
-      name,
-      email: email.toLowerCase(),
-      passwordHash: tempPassword,
-      role: "store-admin",
-      storeId,
-      mustChangePassword: true,
-    });
-
-    // Update denormalised ownerEmail on the store
-    store.ownerEmail = email.toLowerCase();
-    await store.save();
-
+    const session = await User.startSession();
+    let admin;
     try {
-      await sendTempPasswordEmail(admin.email, admin.name, tempPassword, store.name);
-    } catch (emailErr) {
-      console.error("Failed to send temporary password email:", emailErr);
-      return res.status(202).json({
-        admin: { id: admin._id, name: admin.name, email: admin.email, storeId: admin.storeId },
-        emailSent: false,
-        message: `Admin account created for ${admin.email}, but the temporary password email could not be sent. Check SMTP settings in Render logs.`,
+      await session.withTransaction(async () => {
+        [admin] = await User.create([{
+          name,
+          email: email.toLowerCase(),
+          passwordHash: tempPassword,
+          role: "store-admin",
+          storeId,
+          mustChangePassword: true,
+        }], { session });
+
+        await Store.findByIdAndUpdate(storeId, { ownerEmail: email.toLowerCase() }, { session });
       });
+
+      await sendTempPasswordEmail(admin.email, admin.name, tempPassword, store.name);
+    } catch (err) {
+      if (admin?._id) {
+        await Promise.all([
+          User.findByIdAndDelete(admin._id),
+          Store.findByIdAndUpdate(storeId, { ownerEmail: "pending@freshcart.app" }),
+        ]);
+      }
+      throw err;
+    } finally {
+      await session.endSession();
     }
 
     res.status(201).json({
@@ -113,9 +117,21 @@ router.patch("/:adminId", requireSuperAdmin, async (req, res, next) => {
 // ─── DELETE /api/admins/:adminId ──────────────────────────────────────────────
 router.delete("/:adminId", requireSuperAdmin, async (req, res, next) => {
   try {
-    const admin = await User.findByIdAndDelete(req.params.adminId);
+    const admin = await User.findOneAndDelete({ _id: req.params.adminId, role: "store-admin" });
     if (!admin) return res.status(404).json({ error: "Admin not found." });
-    res.json({ message: "Admin account deleted." });
+
+    if (admin.storeId) {
+      const replacementOwner = await User.findOne({
+        role: "store-admin",
+        storeId: admin.storeId,
+      });
+
+      await Store.findByIdAndUpdate(admin.storeId, {
+        ownerEmail: replacementOwner?.email || "pending@freshcart.app",
+      });
+    }
+
+    res.json({ message: "Admin account deleted and store ownership cleared." });
   } catch (err) {
     next(err);
   }
