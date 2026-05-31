@@ -892,16 +892,19 @@ dialog::backdrop {
   bottom: 1rem;
   z-index: 20;
   max-width: min(90vw, 360px);
-  transform: translateY(140%);
+  transform: translateY(calc(100% + 1.25rem));
+  opacity: 0;
+  pointer-events: none;
   border-radius: var(--radius);
   background: var(--ink);
   color: #fff;
   padding: 0.85rem 1rem;
-  transition: transform 160ms ease;
+  transition: transform 160ms ease, opacity 160ms ease;
 }
 
 .toast.show {
   transform: translateY(0);
+  opacity: 1;
 }
 
 @media (max-width: 1100px) {
