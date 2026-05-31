@@ -309,7 +309,7 @@ document.querySelector("#admin-form").addEventListener("submit", async (event) =
       <div><p><strong>Admin email</strong></p><p>${h(email)}</p></div>
       <div><p><strong>Status</strong></p><p>${h(data.message)}</p></div>
       <a class="ghost-link" href="store.html?id=${encodeURIComponent(store?.slug || selectedStoreId)}">Open shop page</a>`;
-    showToast("Admin access granted. Temporary password emailed.");
+    showToast(data.emailSent === false ? "Admin created, but email was not sent." : "Admin access granted. Temporary password emailed.");
   } catch (err) {
     showToast(err.message || "Failed to create admin.");
   }

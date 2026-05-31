@@ -56,11 +56,20 @@ router.post("/", requireSuperAdmin, async (req, res, next) => {
     store.ownerEmail = email.toLowerCase();
     await store.save();
 
-    // Email the temp password — fire-and-forget
-    sendTempPasswordEmail(admin.email, admin.name, tempPassword, store.name).catch(console.error);
+    try {
+      await sendTempPasswordEmail(admin.email, admin.name, tempPassword, store.name);
+    } catch (emailErr) {
+      console.error("Failed to send temporary password email:", emailErr);
+      return res.status(202).json({
+        admin: { id: admin._id, name: admin.name, email: admin.email, storeId: admin.storeId },
+        emailSent: false,
+        message: `Admin account created for ${admin.email}, but the temporary password email could not be sent. Check SMTP settings in Render logs.`,
+      });
+    }
 
     res.status(201).json({
       admin: { id: admin._id, name: admin.name, email: admin.email, storeId: admin.storeId },
+      emailSent: true,
       message: `Temporary password emailed to ${admin.email}.`,
     });
   } catch (err) {
