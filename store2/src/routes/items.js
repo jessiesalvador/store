@@ -79,20 +79,6 @@ router.patch(
   }
 );
 
-// ─── PATCH /api/stores/:storeId/items/bulk-sold-out — bulk toggle ─────────────
-router.patch("/bulk-sold-out", requireStoreAdmin, requireStoreOwnership, async (req, res, next) => {
-  try {
-    const { soldOut, category } = req.body;
-    const filter = { storeId: req.params.storeId };
-    if (category && category !== "all") filter.category = category;
-
-    await Item.updateMany(filter, { $set: { soldOut: Boolean(soldOut) } });
-    res.json({ message: `Items marked as ${soldOut ? "sold out" : "back in stock"}.` });
-  } catch (err) {
-    next(err);
-  }
-});
-
 // ─── DELETE /api/stores/:storeId/items/:itemId ────────────────────────────────
 router.delete("/:itemId", requireStoreAdmin, requireStoreOwnership, async (req, res, next) => {
   try {

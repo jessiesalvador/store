@@ -158,21 +158,6 @@ function renderInventory() {
 
   els.inventoryCount.textContent = `${filtered.length} ${filtered.length === 1 ? "item" : "items"}`;
 
-  // Bulk sold-out button
-  const bulkContainer = document.querySelector("#bulk-controls");
-  if (bulkContainer) {
-    if (!filtered.length) { bulkContainer.innerHTML = ""; }
-    else {
-      const allSoldOut = filtered.every((i) => i.soldOut);
-      const label = selectedCategory === "all" ? "all items" : `all ${h(selectedCategory)} items`;
-      bulkContainer.innerHTML = `
-        <button type="button" class="ghost-button bulk-toggle-btn"
-          data-bulk-sold-out="${allSoldOut ? "false" : "true"}">
-          ${allSoldOut ? `✅ Mark ${label} back in stock` : `⚠️ Mark ${label} as sold out`}
-        </button>`;
-    }
-  }
-
   if (!filtered.length) {
     els.inventoryBody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No items in this category yet.</div></td></tr>`;
     return;
@@ -524,7 +509,8 @@ els.adminCategoryList.addEventListener("click", async (event) => {
 // ── Add category ──────────────────────────────────────────────────────────────
 document.querySelector("#category-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form     = new FormData(event.currentTarget);
+  const formEl   = event.currentTarget;
+  const form     = new FormData(formEl);
   const category = form.get("categoryName").trim();
   if (!category) return;
 
@@ -541,7 +527,7 @@ document.querySelector("#category-form").addEventListener("submit", async (event
     });
     currentStore = data.store;
     selectedCategory = category;
-    event.currentTarget.reset();
+    formEl.reset();
     renderInventory();
     els.itemCategory.value = category;
     showToast("Category added.");
@@ -625,23 +611,6 @@ els.inventoryBody.addEventListener("click", async (event) => {
     } catch (err) {
       showToast(err.message || "Failed to delete item.");
     }
-  }
-});
-
-// ── Bulk sold-out ─────────────────────────────────────────────────────────────
-document.addEventListener("click", async (event) => {
-  const bulkBtn = event.target.closest("[data-bulk-sold-out]");
-  if (!bulkBtn || !currentStore) return;
-  const soldOut = bulkBtn.dataset.bulkSoldOut === "true";
-  try {
-    await api.patch(`/stores/${currentStore._id}/items/bulk-sold-out`, {
-      soldOut,
-      category: selectedCategory,
-    });
-    await loadAndRender();
-    showToast(soldOut ? "Items marked as sold out." : "Items marked back in stock.");
-  } catch (err) {
-    showToast(err.message || "Failed to update items.");
   }
 });
 
