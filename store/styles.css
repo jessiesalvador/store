@@ -698,7 +698,39 @@ th {
 
 .category-summary .tag {
   border-radius: var(--radius);
-  text-align: center;
+  text-align: left;
+}
+
+.removable-tag {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.45rem;
+}
+
+.tag-remove-button {
+  display: inline-grid;
+  place-items: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  flex: 0 0 auto;
+  border: 1px solid rgba(123, 36, 24, 0.22);
+  border-radius: 999px;
+  background: #fff;
+  color: #7b2418;
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1;
+  padding: 0;
+}
+
+.tag-remove-button:hover {
+  background: #fdecea;
+}
+
+.tag-remove-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .store-actions {

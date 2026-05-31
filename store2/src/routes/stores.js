@@ -23,6 +23,23 @@ function cleanHero(input = {}) {
   return hero;
 }
 
+function cleanCategories(input) {
+  if (!Array.isArray(input)) return null;
+  const seen = new Set();
+  const categories = [];
+
+  input.forEach((category) => {
+    const cleaned = String(category || "").trim().slice(0, 60);
+    const key = cleaned.toLowerCase();
+    if (cleaned && !seen.has(key)) {
+      seen.add(key);
+      categories.push(cleaned);
+    }
+  });
+
+  return categories;
+}
+
 // ─── GET /api/stores — public list of all approved stores ────────────────────
 router.get("/", async (req, res, next) => {
   try {
@@ -60,12 +77,14 @@ router.post("/", requireSuperAdmin, async (req, res, next) => {
       return res.status(409).json({ error: `A store with the slug "${slug}" already exists.` });
     }
 
+    const storeCategories = cleanCategories(categories) || ["Produce"];
+
     const store = await Store.create({
       name,
       slug,
       location,
       ownerEmail: ownerEmail.toLowerCase(),
-      categories: categories || ["Produce"],
+      categories: storeCategories.length ? storeCategories : ["Produce"],
       approved: true,
     });
 
@@ -78,11 +97,37 @@ router.post("/", requireSuperAdmin, async (req, res, next) => {
 // ─── PATCH /api/stores/:storeId — update store details ───────────────────────
 router.patch("/:storeId", requireStoreAdmin, requireStoreOwnership, async (req, res, next) => {
   try {
-    const allowed = ["name", "location", "categories"];
+    const allowed = ["name", "location"];
     const updates = {};
     allowed.forEach((key) => {
       if (req.body[key] !== undefined) updates[key] = req.body[key];
     });
+
+    if (req.body.categories !== undefined) {
+      const categories = cleanCategories(req.body.categories);
+      if (!categories) return res.status(400).json({ error: "categories must be a list." });
+      if (!categories.length) return res.status(400).json({ error: "Keep at least one category in the store." });
+
+      const existingStore = await Store.findById(req.params.storeId).select("categories");
+      if (!existingStore) return res.status(404).json({ error: "Store not found." });
+
+      const removedCategories = existingStore.categories.filter((category) => !categories.includes(category));
+      if (removedCategories.length) {
+        const itemInRemovedCategory = await Item.findOne({
+          storeId: req.params.storeId,
+          category: { $in: removedCategories },
+        }).select("category");
+
+        if (itemInRemovedCategory) {
+          return res.status(409).json({
+            error: `Move or delete items in "${itemInRemovedCategory.category}" before removing it.`,
+          });
+        }
+      }
+
+      updates.categories = categories;
+    }
+
     if (req.body.hero && typeof req.body.hero === "object") {
       updates.hero = cleanHero(req.body.hero);
     }

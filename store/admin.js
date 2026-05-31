@@ -133,9 +133,22 @@ function renderInventory() {
   // Category chips display
   els.adminCategoryList.replaceChildren(
     ...currentStore.categories.map((c) => {
-      const span = document.createElement("span");
-      span.className = "tag"; span.textContent = c;
-      return span;
+      const chip = document.createElement("span");
+      chip.className = "tag removable-tag";
+
+      const label = document.createElement("span");
+      label.textContent = c;
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "tag-remove-button";
+      button.dataset.removeCategory = c;
+      button.setAttribute("aria-label", `Remove ${c} category`);
+      button.title = `Remove ${c}`;
+      button.textContent = "x";
+
+      chip.append(label, button);
+      return chip;
     })
   );
 
@@ -469,6 +482,43 @@ els.inventoryCategoryFilter.addEventListener("change", () => {
 els.showArchivedOrders.addEventListener("change", () => {
   showArchived = els.showArchivedOrders.checked;
   renderOrders();
+});
+
+els.adminCategoryList.addEventListener("click", async (event) => {
+  if (!(event.target instanceof Element)) return;
+  const button = event.target.closest("[data-remove-category]");
+  if (!button) return;
+
+  const category = button.dataset.removeCategory;
+  if (!category) return;
+
+  if (currentStore.categories.length <= 1) {
+    showToast("Keep at least one category in the store.");
+    return;
+  }
+
+  const hasItems = allItems.some((item) => item.category === category);
+  if (hasItems) {
+    showToast("Move or delete items in this category before removing it.");
+    return;
+  }
+
+  const confirmed = window.confirm(`Remove "${category}" from this store?`);
+  if (!confirmed) return;
+
+  button.disabled = true;
+  try {
+    const data = await api.patch(`/stores/${currentStore._id}`, {
+      categories: currentStore.categories.filter((c) => c !== category),
+    });
+    currentStore = data.store;
+    if (selectedCategory === category) selectedCategory = "all";
+    renderInventory();
+    showToast("Category removed.");
+  } catch (err) {
+    button.disabled = false;
+    showToast(err.message || "Failed to remove category.");
+  }
 });
 
 // ── Add category ──────────────────────────────────────────────────────────────
