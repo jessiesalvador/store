@@ -50,5 +50,3 @@ jobs:
 
       - name: Deploy to Firebase staging
         run: firebase deploy --project "$FIREBASE_PROJECT_ID" --only hosting,functions,firestore --non-interactive
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
