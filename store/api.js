@@ -55,13 +55,21 @@ const api = {
   delete: (path)         => apiFetch(path, { method: "DELETE" }),
   // For FormData (file uploads)
   postForm: (path, formData) =>
-    getCsrfToken().then((token) =>
-      fetch(`${API}${path}`, { method: "POST", credentials: "include", headers: { "x-csrf-token": token }, body: formData }).then(parseJson)
-    ),
+    getCsrfToken()
+      .then((token) => fetch(`${API}${path}`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "x-csrf-token": token },
+        body: formData,
+      }).then(parseJson)),
   patchForm: (path, formData) =>
-    getCsrfToken().then((token) =>
-      fetch(`${API}${path}`, { method: "PATCH", credentials: "include", headers: { "x-csrf-token": token }, body: formData }).then(parseJson)
-    ),
+    getCsrfToken()
+      .then((token) => fetch(`${API}${path}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "x-csrf-token": token },
+        body: formData,
+      }).then(parseJson)),
 };
 
 async function parseJson(res) {

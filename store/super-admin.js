@@ -22,6 +22,7 @@ function h(value) {
 
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const els = {
+  loadingPanel:    document.querySelector("#super-loading-panel"),
   loginPanel:      document.querySelector("#super-login-panel"),
   content:         document.querySelector("#super-content"),
   loginForm:       document.querySelector("#super-login-form"),
@@ -35,7 +36,6 @@ const els = {
   resetPasswordModal: document.querySelector("#reset-password-modal"),
   resetPasswordForm: document.querySelector("#reset-password-form"),
   resetNewPassword: document.querySelector("#reset-new-password"),
-  resetConfirmPassword: document.querySelector("#reset-confirm-password"),
   resetPasswordMessage: document.querySelector("#reset-password-message"),
   adminStoreSelect:document.querySelector("#admin-store-select"),
   approvalResult:  document.querySelector("#approval-result"),
@@ -165,11 +165,12 @@ async function loadAndRender() {
 }
 
 // ── Login ─────────────────────────────────────────────────────────────────────
-function unlockSuperAdmin() {
+async function unlockSuperAdmin() {
+  els.loadingPanel.classList.add("hidden");
   els.loginPanel.classList.add("hidden");
   els.content.classList.remove("hidden");
   els.logoutButton.classList.remove("hidden");
-  loadAndRender();
+  await loadAndRender();
 }
 
 async function logoutSuperAdmin() {
@@ -183,6 +184,7 @@ async function logoutSuperAdmin() {
   allAdmins = [];
   allRequests = [];
   selectedStoreId = null;
+  els.loadingPanel.classList.add("hidden");
   els.content.classList.add("hidden");
   els.loginPanel.classList.remove("hidden");
   els.logoutButton.classList.add("hidden");
@@ -222,14 +224,9 @@ els.resetPasswordForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   els.resetPasswordMessage.classList.add("hidden");
   const newPassword = els.resetNewPassword.value;
-  const confirmPassword = els.resetConfirmPassword.value;
 
   if (newPassword.length < 8) {
     showFormMessage(els.resetPasswordMessage, "Password must be at least 8 characters.");
-    return;
-  }
-  if (newPassword !== confirmPassword) {
-    showFormMessage(els.resetPasswordMessage, "Passwords do not match.");
     return;
   }
 
@@ -258,7 +255,7 @@ els.loginForm.addEventListener("submit", async (event) => {
       return;
     }
     currentUser = data.user;
-    unlockSuperAdmin();
+    await unlockSuperAdmin();
   } catch (err) {
     showToast(err.message || "Invalid email or password.");
   }
@@ -383,6 +380,8 @@ els.requestsList.addEventListener("click", async (event) => {
 // ── Boot — restore session or show login ──────────────────────────────────────
 async function boot() {
   if (resetToken) {
+    els.loadingPanel.classList.add("hidden");
+    els.loginPanel.classList.remove("hidden");
     els.resetPasswordModal.showModal();
     return;
   }
@@ -391,10 +390,14 @@ async function boot() {
     const data = await api.get("/auth/me");
     if (data.user.role === "super-admin") {
       currentUser = data.user;
-      unlockSuperAdmin();
+      await unlockSuperAdmin();
+    } else {
+      els.loadingPanel.classList.add("hidden");
+      els.loginPanel.classList.remove("hidden");
     }
   } catch {
-    // Not logged in — show login panel (already visible by default)
+    els.loadingPanel.classList.add("hidden");
+    els.loginPanel.classList.remove("hidden");
   }
 }
 

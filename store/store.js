@@ -11,8 +11,18 @@ let   allItems     = [];     // all items for this store from API
 let   cart         = {};     // { itemId: quantity } — kept in localStorage for UX
 let   selectedCategory = "all";
 let   selectedSort     = "default";
+let   itemOffset       = 0;
+let   itemTotal        = 0;
+let   isLoadingItems   = false;
+let   emailOtpState = {
+  email: null,
+  otpId: null,
+  verifiedToken: null,
+};
+let   chatMessages = [];
 
 const money = new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" });
+const ITEM_PAGE_SIZE = 36;
 
 function h(value) {
   return String(value ?? "")
@@ -35,8 +45,10 @@ const els = {
   location:             document.querySelector("#store-location"),
   search:               document.querySelector("#store-search-input"),
   sortSelect:           document.querySelector("#store-sort"),
+  categorySelect:       document.querySelector("#store-category-select"),
   categoryFilters:      document.querySelector("#store-category-filters"),
   productGrid:          document.querySelector("#store-product-grid"),
+  loadMore:             document.querySelector("#store-load-more"),
   resultCount:          document.querySelector("#store-result-count"),
   cartItems:            document.querySelector("#store-cart-items"),
   cartCount:            document.querySelector("#store-cart-count"),
@@ -55,9 +67,17 @@ const els = {
   drawerClose:          document.querySelector("#drawer-close"),
   drawerCartItems:      document.querySelector("#drawer-cart-items"),
   drawerGrandTotal:     document.querySelector("#drawer-grand-total"),
+  drawerOrderError:     document.querySelector("#drawer-order-error"),
   drawerSendOrderButton:document.querySelector("#drawer-send-order-button"),
   customerForms:        document.querySelectorAll("[data-customer-form]"),
   emailErrors:          document.querySelectorAll("[data-email-error]"),
+  otpPanels:            document.querySelectorAll("[data-otp-panel]"),
+  chatFab:              document.querySelector("#chat-fab"),
+  chatPanel:            document.querySelector("#chat-panel"),
+  chatClose:            document.querySelector("#chat-close"),
+  chatMessages:         document.querySelector("#chat-messages"),
+  chatForm:             document.querySelector("#chat-form"),
+  chatInput:            document.querySelector("#chat-input"),
 };
 
 // ── Toast ─────────────────────────────────────────────────────────────────────
@@ -70,6 +90,7 @@ function showToast(message) {
 
 // ── Mobile cart drawer ────────────────────────────────────────────────────────
 function openCartDrawer() {
+  clearDrawerOrderError();
   els.cartDrawer.classList.add("open");
   els.cartDrawerBackdrop.classList.add("open");
   els.cartDrawer.setAttribute("aria-hidden", "false");
@@ -77,6 +98,7 @@ function openCartDrawer() {
   renderDrawerCart();
 }
 function closeCartDrawer() {
+  clearDrawerOrderError();
   els.cartDrawer.classList.remove("open");
   els.cartDrawerBackdrop.classList.remove("open");
   els.cartDrawer.setAttribute("aria-hidden", "true");
@@ -86,19 +108,178 @@ els.mobileFab.addEventListener("click", openCartDrawer);
 els.drawerClose.addEventListener("click", closeCartDrawer);
 els.cartDrawerBackdrop.addEventListener("click", closeCartDrawer);
 
+function showDrawerOrderError(message) {
+  els.drawerOrderError.textContent = message;
+  els.drawerOrderError.classList.remove("hidden");
+}
+
+function clearDrawerOrderError() {
+  els.drawerOrderError.textContent = "";
+  els.drawerOrderError.classList.add("hidden");
+}
+
+function activeOtpPanel() {
+  return activeCustomerForm().querySelector("[data-otp-panel]");
+}
+
+function showOtpMessage(panel, message, isError = true) {
+  const messageEl = panel?.querySelector("[data-otp-message]");
+  if (!messageEl) return;
+  messageEl.textContent = message;
+  messageEl.style.color = isError ? "" : "var(--brand)";
+}
+
+function resetEmailOtpState() {
+  emailOtpState = { email: null, otpId: null, verifiedToken: null };
+  els.otpPanels.forEach((panel) => {
+    panel.querySelector('[name="emailOtp"]').value = "";
+    showOtpMessage(panel, "");
+  });
+  updateSendOrderButtons();
+}
+
+function renderOtpPanels() {
+  const required = Boolean(store?.orderEmailOtpRequired);
+  els.otpPanels.forEach((panel) => {
+    panel.classList.toggle("hidden", !required);
+  });
+  updateSendOrderButtons();
+}
+
+function updateSendOrderButtons() {
+  const disabled = Boolean(store?.orderEmailOtpRequired && !emailOtpState.verifiedToken);
+  els.sendOrderButton.disabled = disabled;
+  els.drawerSendOrderButton.disabled = disabled;
+}
+
+// ── Shopping assistant ───────────────────────────────────────────────────────
+function toggleChat(open = els.chatPanel.classList.contains("hidden")) {
+  els.chatPanel.classList.toggle("hidden", !open);
+  els.chatFab.setAttribute("aria-expanded", String(open));
+  if (open) els.chatInput.focus();
+}
+
+function addChatMessage(role, content, feedback = null) {
+  const message = document.createElement("div");
+  message.className = `chat-message ${role}`;
+  message.textContent = content;
+  els.chatMessages.append(message);
+  if (feedback && role === "assistant") {
+    const actions = document.createElement("div");
+    actions.className = "chat-feedback";
+    actions.innerHTML = `
+      <span>Was this helpful?</span>
+      <button class="ghost-button" type="button" data-chat-rating="up">Good</button>
+      <button class="ghost-button" type="button" data-chat-rating="down">Needs work</button>`;
+    actions.dataset.question = feedback.question;
+    actions.dataset.answer = content;
+    els.chatMessages.append(actions);
+  }
+  els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+}
+
+async function sendChatFeedback(button) {
+  if (!store) return;
+  const actions = button.closest(".chat-feedback");
+  if (!actions || actions.dataset.sent === "true") return;
+
+  actions.querySelectorAll("button").forEach((btn) => { btn.disabled = true; });
+  try {
+    await api.post(`/stores/${store._id}/chat-feedback`, {
+      rating: button.dataset.chatRating,
+      question: actions.dataset.question,
+      answer: actions.dataset.answer,
+    });
+    actions.dataset.sent = "true";
+    actions.innerHTML = `<span>Thanks for the feedback.</span>`;
+  } catch (err) {
+    actions.querySelectorAll("button").forEach((btn) => { btn.disabled = false; });
+    showToast(err.message || "Failed to save feedback.");
+  }
+}
+
+async function sendChatMessage(event) {
+  event.preventDefault();
+  if (!store) return;
+
+  const message = els.chatInput.value.trim();
+  if (!message) return;
+
+  chatMessages.push({ role: "user", content: message });
+  addChatMessage("user", message);
+  els.chatInput.value = "";
+  els.chatInput.disabled = true;
+  const submitButton = els.chatForm.querySelector("button[type='submit']");
+  submitButton.disabled = true;
+  submitButton.textContent = "Thinking...";
+
+  try {
+    const data = await api.post(`/stores/${store._id}/chat`, {
+      message,
+      history: chatMessages.slice(-8),
+    });
+    const reply = data.message || "I couldn't answer that right now.";
+    chatMessages.push({ role: "assistant", content: reply });
+    addChatMessage("assistant", reply, { question: message });
+  } catch (err) {
+    const reply = err.message || "The shopping assistant is unavailable right now.";
+    chatMessages.push({ role: "assistant", content: reply });
+    addChatMessage("assistant", reply);
+  } finally {
+    els.chatInput.disabled = false;
+    submitButton.disabled = false;
+    submitButton.textContent = "Send";
+    els.chatInput.focus();
+  }
+}
+
 // ── Filtering helpers ─────────────────────────────────────────────────────────
 function visibleItems() {
-  const term = els.search.value.trim().toLowerCase();
-  let items = allItems.filter((item) => {
-    const catOk  = selectedCategory === "all" || item.category === selectedCategory;
-    const termOk = !term || item.name.toLowerCase().includes(term) || item.category.toLowerCase().includes(term);
-    return catOk && termOk;
+  return allItems;
+}
+
+function itemQuery(offset = 0) {
+  const query = new URLSearchParams({
+    limit: String(ITEM_PAGE_SIZE),
+    offset: String(offset),
   });
-  if (selectedSort === "price-asc")  items.sort((a, b) => a.price - b.price);
-  if (selectedSort === "price-desc") items.sort((a, b) => b.price - a.price);
-  if (selectedSort === "name-asc")   items.sort((a, b) => a.name.localeCompare(b.name));
-  if (selectedSort === "name-desc")  items.sort((a, b) => b.name.localeCompare(a.name));
-  return items;
+  if (selectedCategory !== "all") query.set("category", selectedCategory);
+  if (selectedSort !== "default") query.set("sort", selectedSort);
+  const term = els.search.value.trim();
+  if (term) query.set("search", term);
+  return query.toString();
+}
+
+async function loadItems({ reset = false } = {}) {
+  if (!store || isLoadingItems) return;
+  isLoadingItems = true;
+  els.loadMore.disabled = true;
+  els.loadMore.textContent = reset ? "Loading..." : "Loading more...";
+
+  const nextOffset = reset ? 0 : itemOffset;
+  try {
+    const data = await api.get(`/stores/${store._id}/items?${itemQuery(nextOffset)}`);
+    allItems = reset ? data.items : [...allItems, ...data.items];
+    itemOffset = allItems.length;
+    itemTotal = Number(data.total || allItems.length);
+    renderCategories();
+    renderProducts();
+    renderCart();
+  } catch (err) {
+    showToast(err.message || "Failed to load items.");
+  } finally {
+    isLoadingItems = false;
+    updateLoadMoreButton();
+  }
+}
+
+function updateLoadMoreButton() {
+  const hasMore = allItems.length < itemTotal;
+  els.loadMore.classList.toggle("hidden", !hasMore);
+  els.loadMore.disabled = isLoadingItems;
+  els.loadMore.textContent = hasMore
+    ? `Load more items (${allItems.length} of ${itemTotal})`
+    : "Load more items";
 }
 
 // ── Category chips ────────────────────────────────────────────────────────────
@@ -106,18 +287,37 @@ function renderCategories() {
   if (!store) return;
   if (!store.categories.includes(selectedCategory)) selectedCategory = "all";
 
+  function categoryCount(value) {
+    return value === "all"
+      ? itemTotal
+      : value === selectedCategory
+        ? itemTotal
+        : allItems.filter((i) => i.category === value).length;
+  }
+
   function chip(value, label) {
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = `category-chip${selectedCategory === value ? " active" : ""}`;
     btn.dataset.category = value;
     btn.setAttribute("aria-pressed", String(selectedCategory === value));
-    const count = value === "all"
-      ? allItems.length
-      : allItems.filter((i) => i.category === value).length;
+    const count = categoryCount(value);
     btn.innerHTML = `<span>${h(label)}</span><strong>${count}</strong>`;
     return btn;
   }
+
+  function categoryOption(value, label) {
+    const opt = document.createElement("option");
+    opt.value = value;
+    opt.textContent = `${label} (${categoryCount(value)})`;
+    return opt;
+  }
+
+  els.categorySelect.replaceChildren(
+    categoryOption("all", "All categories"),
+    ...store.categories.map((c) => categoryOption(c, c))
+  );
+  els.categorySelect.value = selectedCategory;
 
   els.categoryFilters.replaceChildren(
     chip("all", "All categories"),
@@ -128,7 +328,9 @@ function renderCategories() {
 // ── Product grid ──────────────────────────────────────────────────────────────
 function renderProducts() {
   const products = visibleItems();
-  els.resultCount.textContent = `${products.length} ${products.length === 1 ? "item" : "items"}`;
+  els.resultCount.textContent = itemTotal > products.length
+    ? `Showing ${products.length} of ${itemTotal} items`
+    : `${products.length} ${products.length === 1 ? "item" : "items"}`;
 
   if (!products.length) {
     els.productGrid.innerHTML = `
@@ -171,6 +373,7 @@ function renderProducts() {
       </div>`;
     return card;
   }));
+  updateLoadMoreButton();
 }
 
 // ── Cart ──────────────────────────────────────────────────────────────────────
@@ -231,6 +434,7 @@ function renderDrawerCart() {
 }
 
 function adjustCart(id, delta) {
+  clearDrawerOrderError();
   cart[id] = (cart[id] || 0) + delta;
   if (cart[id] <= 0) delete cart[id];
   saveCart(cart);
@@ -279,27 +483,142 @@ function customerDetails() {
   };
 }
 
+async function sendEmailOtp(form = activeCustomerForm()) {
+  const customer = customerDetails();
+  const panel = form.querySelector("[data-otp-panel]");
+  if (!customer || !panel) return false;
+
+  const sendButton = panel.querySelector("[data-send-otp]");
+  sendButton.disabled = true;
+  sendButton.textContent = "Sending...";
+  showOtpMessage(panel, "");
+
+  try {
+    const data = await api.post(`/stores/${store._id}/orders/otp/start`, { email: customer.email });
+    emailOtpState = { email: customer.email, otpId: data.otpId, verifiedToken: null };
+    updateSendOrderButtons();
+    showOtpMessage(panel, "Code sent. Check your email.", false);
+    panel.querySelector('[name="emailOtp"]').focus();
+    return true;
+  } catch (err) {
+    showOtpMessage(panel, err.message || "Failed to send verification code.");
+    return false;
+  } finally {
+    sendButton.disabled = false;
+    sendButton.textContent = "Send code";
+  }
+}
+
+async function verifyEmailOtp(form = activeCustomerForm()) {
+  const customer = customerDetails();
+  const panel = form.querySelector("[data-otp-panel]");
+  if (!customer || !panel) return false;
+
+  const codeInput = panel.querySelector('[name="emailOtp"]');
+  const code = codeInput.value.trim();
+  if (!emailOtpState.otpId || emailOtpState.email !== customer.email) {
+    showOtpMessage(panel, "Send a verification code first.");
+    return false;
+  }
+  if (!/^\d{6}$/.test(code)) {
+    showOtpMessage(panel, "Enter the 6-digit verification code.");
+    codeInput.focus();
+    return false;
+  }
+
+  const verifyButton = panel.querySelector("[data-verify-otp]");
+  verifyButton.disabled = true;
+  verifyButton.textContent = "Verifying...";
+  showOtpMessage(panel, "");
+
+  try {
+    const data = await api.post(`/stores/${store._id}/orders/otp/verify`, {
+      email: customer.email,
+      otpId: emailOtpState.otpId,
+      code,
+    });
+    emailOtpState = {
+      email: customer.email,
+      otpId: emailOtpState.otpId,
+      verifiedToken: data.emailVerificationToken,
+    };
+    updateSendOrderButtons();
+    showOtpMessage(panel, "Email verified. Send your order when ready.", false);
+    return true;
+  } catch (err) {
+    showOtpMessage(panel, err.message || "Failed to verify code.");
+    return false;
+  } finally {
+    verifyButton.disabled = false;
+    verifyButton.textContent = "Verify code";
+  }
+}
+
+async function ensureEmailVerified(customer, isDrawerOrder) {
+  if (!store?.orderEmailOtpRequired) return true;
+  const panel = activeOtpPanel();
+  const notify = (message) => {
+    showOtpMessage(panel, message);
+    if (isDrawerOrder) showDrawerOrderError(message);
+    else showToast(message);
+  };
+
+  if (emailOtpState.email === customer.email && emailOtpState.verifiedToken) {
+    return true;
+  }
+
+  if (!emailOtpState.otpId || emailOtpState.email !== customer.email) {
+    await sendEmailOtp();
+    return false;
+  }
+
+  const code = panel.querySelector('[name="emailOtp"]').value.trim();
+  if (/^\d{6}$/.test(code) && await verifyEmailOtp()) {
+    return true;
+  }
+
+  notify("Enter and verify the code sent to your email.");
+  panel.querySelector('[name="emailOtp"]').focus();
+  return false;
+}
+
 // ── Send order (POST to API) ──────────────────────────────────────────────────
-async function sendOrder() {
+async function sendOrder(event) {
+  const isDrawerOrder = event?.currentTarget === els.drawerSendOrderButton || els.cartDrawer.classList.contains("open");
+  clearDrawerOrderError();
   const entries = cartEntries();
   if (!entries.length) {
+    if (isDrawerOrder) {
+      showDrawerOrderError("Add at least one item before sending an order.");
+      return;
+    }
     showToast("Add at least one item before sending an order.");
     return;
   }
   const customer = customerDetails();
   if (!customer) return;
+  if (!(await ensureEmailVerified(customer, isDrawerOrder))) return;
 
   try {
-    await api.post(`/stores/${store._id}/orders`, { cart, customer });
+    await api.post(`/stores/${store._id}/orders`, {
+      cart,
+      customer,
+      emailVerificationToken: emailOtpState.verifiedToken,
+    });
     cart = {};
     saveCart(cart);
     els.customerForms.forEach((form) => form.reset());
+    resetEmailOtpState();
     clearEmailErrors();
     renderCart();
     renderProducts();
     closeCartDrawer();
     showToast(`Order sent to ${store.name}!`);
   } catch (err) {
+    if (isDrawerOrder) {
+      showDrawerOrderError(err.message || "Failed to send order. Please try again.");
+      return;
+    }
     showToast(err.message || "Failed to send order. Please try again.");
   }
 }
@@ -324,15 +643,45 @@ els.productGrid.addEventListener("click", (event) => {
 
 els.sendOrderButton.addEventListener("click", sendOrder);
 els.drawerSendOrderButton.addEventListener("click", sendOrder);
+els.loadMore.addEventListener("click", () => loadItems());
+els.chatFab.addEventListener("click", () => toggleChat());
+els.chatClose.addEventListener("click", () => toggleChat(false));
+els.chatForm.addEventListener("submit", sendChatMessage);
+els.chatMessages.addEventListener("click", (event) => {
+  if (!(event.target instanceof Element)) return;
+  const button = event.target.closest("[data-chat-rating]");
+  if (button) sendChatFeedback(button);
+});
 
-els.search.addEventListener("input", () => { renderCategories(); renderProducts(); });
-els.sortSelect.addEventListener("change", () => { selectedSort = els.sortSelect.value; renderProducts(); });
+els.customerForms.forEach((form) => {
+  form.addEventListener("click", async (event) => {
+    if (!(event.target instanceof Element)) return;
+    const sendOtpButton = event.target.closest("[data-send-otp]");
+    const verifyOtpButton = event.target.closest("[data-verify-otp]");
+    if (sendOtpButton) await sendEmailOtp(form);
+    if (verifyOtpButton) await verifyEmailOtp(form);
+  });
+
+  form.querySelector('[name="customerEmail"]').addEventListener("input", resetEmailOtpState);
+});
+
+els.search.addEventListener("input", () => {
+  clearTimeout(els.search._t);
+  els.search._t = setTimeout(() => loadItems({ reset: true }), 220);
+});
+els.sortSelect.addEventListener("change", () => {
+  selectedSort = els.sortSelect.value;
+  loadItems({ reset: true });
+});
+els.categorySelect.addEventListener("change", () => {
+  selectedCategory = els.categorySelect.value;
+  loadItems({ reset: true });
+});
 els.categoryFilters.addEventListener("click", (event) => {
   const btn = event.target.closest("[data-category]");
   if (!btn) return;
   selectedCategory = btn.dataset.category;
-  renderCategories();
-  renderProducts();
+  loadItems({ reset: true });
 });
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -352,10 +701,6 @@ async function boot() {
       return;
     }
 
-    // Load items
-    const itemsData = await api.get(`/stores/${store._id}/items`);
-    allItems = itemsData.items;
-
     // Render page
     const hero = store.hero || {};
     const defaultDetail = `${store.name} - ${store.location}`;
@@ -367,9 +712,8 @@ async function boot() {
     els.heroStoreLocation.textContent = hero.subheading || "Browse seasonal produce, pantry staples, and more.";
     els.heroStoreDetail.textContent   = hero.detail || defaultDetail;
 
-    renderCategories();
-    renderProducts();
-    renderCart();
+    renderOtpPanels();
+    await loadItems({ reset: true });
   } catch (err) {
     document.querySelector("main").innerHTML = `
       <section class="panel auth-panel">

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>FreshCart Store Admin</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=assistant-learning-20260604">
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to main content</a>
@@ -25,7 +25,12 @@
     </header>
 
     <main id="main">
-      <section class="auth-panel panel" id="admin-login-panel" aria-labelledby="admin-login-title">
+      <section class="auth-panel panel" id="admin-loading-panel" aria-live="polite" aria-labelledby="admin-loading-title">
+        <div class="loading-icon" aria-hidden="true"></div>
+        <span class="sr-only" id="admin-loading-title">Loading admin portal</span>
+      </section>
+
+      <section class="auth-panel panel hidden" id="admin-login-panel" aria-labelledby="admin-login-title">
         <p class="eyebrow">Sign in required</p>
         <h2 id="admin-login-title">Store admin access</h2>
         <form class="stacked-form" id="admin-login-form">
@@ -51,6 +56,16 @@
               Active store
               <select id="admin-store"></select>
             </label>
+            <form id="order-settings-form" class="settings-form">
+              <label class="settings-toggle">
+                <input id="order-email-otp-required" name="orderEmailOtpRequired" type="checkbox">
+                <span>
+                  <strong>Require email verification for orders</strong>
+                  <small>Customers receive a one-time code before the order is sent to you.</small>
+                </span>
+              </label>
+              <button class="ghost-button" type="submit">Save order settings</button>
+            </form>
             <form id="hero-form" class="stacked-form">
               <h3>Storefront banner</h3>
               <label>
@@ -111,6 +126,45 @@
             </form>
           </section>
 
+          <section class="panel">
+            <h2>Upload item list</h2>
+            <form id="bulk-item-form" class="stacked-form">
+              <label>
+                CSV file
+                <input id="bulk-item-file" name="bulkItems" type="file" accept=".csv,text/csv" required>
+              </label>
+              <p class="helper-text">Use columns: item name, category, price. A header row is optional.</p>
+              <p class="helper-text">Items imported here use the default Upload image placeholder.</p>
+              <p class="password-error hidden" id="bulk-item-message" role="alert"></p>
+              <button type="submit">Upload item list</button>
+            </form>
+          </section>
+
+          <section class="panel wide">
+            <div class="section-head">
+              <div>
+                <h2>AI assistant learning</h2>
+                <p class="helper-text">Add approved corrections and synonyms for the shopping assistant.</p>
+              </div>
+            </div>
+            <form id="assistant-learning-form" class="stacked-form">
+              <label>
+                Correction notes
+                <textarea id="assistant-notes" name="assistantNotes" rows="4" placeholder="One rule per line, e.g. If customers ask for Coke, suggest Coca-Cola products only if available."></textarea>
+              </label>
+              <label>
+                Synonyms
+                <textarea id="assistant-synonyms" name="assistantSynonyms" rows="4" placeholder="One mapping per line, e.g. coke = Coca-Cola"></textarea>
+              </label>
+              <p class="helper-text">Customer feedback is for review only. Add trusted lessons here before they affect answers.</p>
+              <button type="submit">Save assistant learning</button>
+            </form>
+            <div class="mini-section" aria-labelledby="assistant-feedback-title">
+              <h3 id="assistant-feedback-title">Recent assistant feedback</h3>
+              <div class="assistant-feedback-list" id="assistant-feedback-list"></div>
+            </div>
+          </section>
+
           <section class="panel wide">
             <div class="section-head">
               <div>
@@ -132,7 +186,11 @@
                 <h2>Current inventory</h2>
                 <p class="helper-text">Select a category to manage existing items.</p>
               </div>
-              <span id="inventory-count" class="status-pill">0 items</span>
+              <div class="inventory-toolbar">
+                <span id="inventory-count" class="status-pill">0 items</span>
+                <button class="ghost-button" id="bulk-inventory-edit" type="button">Bulk update</button>
+                <button id="bulk-inventory-save" type="button" disabled>Bulk save</button>
+              </div>
             </div>
             <label class="inventory-filter">
               Inventory category
@@ -153,6 +211,9 @@
                 </thead>
                 <tbody id="inventory-body"></tbody>
               </table>
+            </div>
+            <div class="load-more-row">
+              <button class="ghost-button hidden" id="admin-load-more-items" type="button">Load more items</button>
             </div>
           </section>
         </div>
@@ -211,10 +272,6 @@
             New password
             <input id="reset-new-password" name="newPassword" type="password" autocomplete="new-password" minlength="8" required>
           </label>
-          <label>
-            Confirm password
-            <input id="reset-confirm-password" name="confirmPassword" type="password" autocomplete="new-password" required>
-          </label>
           <p class="password-error hidden" id="reset-password-message" role="alert"></p>
           <button type="submit">Set new password</button>
         </form>
@@ -230,7 +287,7 @@
 
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
     
-    <script src="api.js"></script>
-    <script src="admin.js"></script>
+    <script src="api.js?v=no-appcheck-20260602"></script>
+    <script src="admin.js?v=paged-items-20260605"></script>
   </body>
 </html>

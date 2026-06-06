@@ -90,6 +90,23 @@ async function sendOrderNotification(order, adminEmail) {
   });
 }
 
+// ─── Order email OTP → customer ───────────────────────────────────────────────
+async function sendOrderOtpEmail(customerEmail, storeName, code) {
+  const body = `
+    <h2>Verify your email</h2>
+    <p>Use this code to finish sending your order to <strong>${escapeHtml(storeName)}</strong>.</p>
+    <div class="temp-pw">${escapeHtml(code)}</div>
+    <p>This code expires in 10 minutes. If you did not request this, you can ignore this email.</p>
+  `;
+
+  await transporter.sendMail({
+    from: process.env.EMAIL_FROM,
+    to: customerEmail,
+    subject: `FreshCart verification code - ${storeName}`,
+    html: emailWrapper("Order email verification", body),
+  });
+}
+
 // ─── Temporary password → new store admin ─────────────────────────────────────
 async function sendTempPasswordEmail(adminEmail, adminName, tempPassword, storeName) {
   const body = `
@@ -187,6 +204,7 @@ async function sendStoreApprovedEmail(ownerEmail, ownerName, storeName, tempPass
 
 module.exports = {
   sendOrderNotification,
+  sendOrderOtpEmail,
   sendTempPasswordEmail,
   sendPasswordChangedEmail,
   sendPasswordResetEmail,

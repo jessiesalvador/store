@@ -1,22 +1,51 @@
 const express = require("express");
 const crypto = require("crypto");
-const User = require("../models/User");
-const Store = require("../models/Store");
+const bcrypt = require("bcryptjs");
 const { requireSuperAdmin } = require("../middleware/guards");
 const { sendTempPasswordEmail } = require("../services/emailService");
+const { col, createDoc, deleteDoc, fromQuery, getById, updateDoc } = require("../utils/firestoreData");
 
 const router = express.Router();
+const SALT_ROUNDS = 12;
 
 function generateTempPassword() {
   return `Temp-${crypto.randomBytes(9).toString("base64url")}`;
 }
 
+function withoutPassword(user) {
+  if (!user) return null;
+  const { passwordHash, passwordResetTokenHash, passwordResetExpiresAt, ...safe } = user;
+  return safe;
+}
+
+async function findUserByEmail(email) {
+  return fromQuery(await col("users").where("email", "==", email).limit(1).get())[0] || null;
+}
+
+async function findStoreAdminByStore(storeId, exceptUserId = null) {
+  const users = fromQuery(await col("users").where("storeId", "==", storeId).get());
+  return users.find((user) => user.role === "store-admin" && user._id !== exceptUserId) || null;
+}
+
+async function listAdminsWithStores() {
+  const admins = fromQuery(await col("users").where("role", "==", "store-admin").get()).map(withoutPassword);
+  const storeIds = [...new Set(admins.map((admin) => admin.storeId).filter(Boolean))];
+  const storeMap = new Map();
+  if (storeIds.length) {
+    const snaps = await col("stores").firestore.getAll(...storeIds.map((id) => col("stores").doc(id)));
+    snaps.forEach((snap) => {
+      if (snap.exists) storeMap.set(snap.id, { _id: snap.id, id: snap.id, name: snap.data().name, slug: snap.data().slug });
+    });
+  }
+  return admins
+    .map((admin) => ({ ...admin, storeId: admin.storeId ? storeMap.get(admin.storeId) || admin.storeId : null }))
+    .sort((a, b) => String(a.email).localeCompare(String(b.email)));
+}
+
 // ─── GET /api/admins — list all store admins ──────────────────────────────────
 router.get("/", requireSuperAdmin, async (req, res, next) => {
   try {
-    const admins = await User.find({ role: "store-admin" })
-      .select("-passwordHash")
-      .populate("storeId", "name slug");
+    const admins = await listAdminsWithStores();
     res.json({ admins });
   } catch (err) {
     next(err);
@@ -31,44 +60,46 @@ router.post("/", requireSuperAdmin, async (req, res, next) => {
       return res.status(400).json({ error: "name, email and storeId are required." });
     }
 
-    const store = await Store.findById(storeId);
+    const store = await getById("stores", storeId);
     if (!store) return res.status(404).json({ error: "Store not found." });
 
-    const existing = await User.findOne({ email: email.toLowerCase() });
+    const existing = await findUserByEmail(email.toLowerCase());
     if (existing) return res.status(409).json({ error: "An account with this email already exists." });
 
-    const storeOwner = await User.findOne({ role: "store-admin", storeId });
+    const storeOwner = await findStoreAdminByStore(storeId);
     if (storeOwner) return res.status(409).json({ error: "This store already has an admin owner." });
 
     const tempPassword = generateTempPassword();
-
-    const session = await User.startSession();
     let admin;
     try {
-      await session.withTransaction(async () => {
-        [admin] = await User.create([{
+      await col("users").firestore.runTransaction(async (transaction) => {
+        const adminRef = col("users").doc();
+        admin = {
+          _id: adminRef.id,
+          id: adminRef.id,
           name,
           email: email.toLowerCase(),
-          passwordHash: tempPassword,
+          passwordHash: await bcrypt.hash(tempPassword, SALT_ROUNDS),
           role: "store-admin",
           storeId,
           mustChangePassword: true,
-        }], { session });
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
 
-        await Store.findByIdAndUpdate(storeId, { ownerEmail: email.toLowerCase() }, { session });
+        transaction.set(adminRef, admin);
+        transaction.update(col("stores").doc(storeId), { ownerEmail: email.toLowerCase(), updatedAt: new Date() });
       });
 
       await sendTempPasswordEmail(admin.email, admin.name, tempPassword, store.name);
     } catch (err) {
       if (admin?._id) {
         await Promise.all([
-          User.findByIdAndDelete(admin._id),
-          Store.findByIdAndUpdate(storeId, { ownerEmail: "pending@freshcart.app" }),
+          deleteDoc("users", admin._id),
+          updateDoc("stores", storeId, { ownerEmail: "pending@freshcart.app" }),
         ]);
       }
       throw err;
-    } finally {
-      await session.endSession();
     }
 
     res.status(201).json({
@@ -87,26 +118,17 @@ router.patch("/:adminId", requireSuperAdmin, async (req, res, next) => {
     const { storeId } = req.body;
     if (!storeId) return res.status(400).json({ error: "storeId is required." });
 
-    const store = await Store.findById(storeId);
+    const store = await getById("stores", storeId);
     if (!store) return res.status(404).json({ error: "Store not found." });
 
-    const storeOwner = await User.findOne({
-      role: "store-admin",
-      storeId,
-      _id: { $ne: req.params.adminId },
-    });
+    const storeOwner = await findStoreAdminByStore(storeId, req.params.adminId);
     if (storeOwner) return res.status(409).json({ error: "This store already has an admin owner." });
 
-    const admin = await User.findOneAndUpdate(
-      { _id: req.params.adminId, role: "store-admin" },
-      { storeId },
-      { new: true, runValidators: true }
-    ).select("-passwordHash");
+    const existingAdmin = await getById("users", req.params.adminId);
+    if (!existingAdmin || existingAdmin.role !== "store-admin") return res.status(404).json({ error: "Admin not found." });
 
-    if (!admin) return res.status(404).json({ error: "Admin not found." });
-
-    store.ownerEmail = admin.email;
-    await store.save();
+    const admin = withoutPassword(await updateDoc("users", req.params.adminId, { storeId }, { base: existingAdmin }));
+    await updateDoc("stores", storeId, { ownerEmail: admin.email });
 
     res.json({ admin });
   } catch (err) {
@@ -117,16 +139,15 @@ router.patch("/:adminId", requireSuperAdmin, async (req, res, next) => {
 // ─── DELETE /api/admins/:adminId ──────────────────────────────────────────────
 router.delete("/:adminId", requireSuperAdmin, async (req, res, next) => {
   try {
-    const admin = await User.findOneAndDelete({ _id: req.params.adminId, role: "store-admin" });
+    const admin = await getById("users", req.params.adminId);
+    if (admin?.role !== "store-admin") return res.status(404).json({ error: "Admin not found." });
     if (!admin) return res.status(404).json({ error: "Admin not found." });
+    await deleteDoc("users", req.params.adminId);
 
     if (admin.storeId) {
-      const replacementOwner = await User.findOne({
-        role: "store-admin",
-        storeId: admin.storeId,
-      });
+      const replacementOwner = await findStoreAdminByStore(admin.storeId);
 
-      await Store.findByIdAndUpdate(admin.storeId, {
+      await updateDoc("stores", admin.storeId, {
         ownerEmail: replacementOwner?.email || "pending@freshcart.app",
       });
     }

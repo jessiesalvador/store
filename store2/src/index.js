@@ -1,16 +1,18 @@
-require("dotenv").config();
+const path = require("path");
+require("dotenv").config({ path: path.join(__dirname, "../.env") });
 
 const express = require("express");
-const path = require("path");
+const fs = require("fs");
 const helmet = require("helmet");
 const cors = require("cors");
 const session = require("express-session");
-const MongoStore = require("connect-mongo");
-const rateLimit = require("express-rate-limit");
 const crypto = require("crypto");
+const { onRequest } = require("firebase-functions/v2/https");
+const { defineSecret } = require("firebase-functions/params");
 
-const { connectDB } = require("./config/db");
 const { errorHandler } = require("./middleware/errorHandler");
+const { createRateLimiter } = require("./middleware/rateLimiters");
+const { FirestoreSessionStore } = require("./services/firestoreSessionStore");
 
 const authRoutes = require("./routes/auth");
 const storeRoutes = require("./routes/stores");
@@ -22,6 +24,10 @@ const storeRequestRoutes = require("./routes/storeRequests");
 const app = express();
 const PORT = process.env.PORT || 3000;
 const frontendDir = path.join(__dirname, "../../store");
+const frontendEntry = path.join(frontendDir, "store.html");
+const hasBundledFrontend = fs.existsSync(frontendEntry);
+const anthropicApiKey = defineSecret("ANTHROPIC_API_KEY");
+let sessionMiddleware;
 
 // Render terminates HTTPS before requests reach Express. Trusting the first
 // proxy lets secure cookies work correctly in production.
@@ -37,6 +43,8 @@ app.use(
         styleSrc: ["'self'", "https://fonts.googleapis.com"],
         fontSrc: ["'self'", "https://fonts.gstatic.com"],
         imgSrc: ["'self'", "data:", "https://images.unsplash.com"],
+        connectSrc: ["'self'"],
+        frameSrc: ["'self'"],
       },
     },
   })
@@ -46,18 +54,27 @@ app.use(
 // Dev: allow any localhost/127.0.0.1 origin (Live Server uses random ports).
 // Prod: lock to CLIENT_URL only.
 const localhostPattern = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+const projectId = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "jsstore-b6d73";
+const allowedOrigins = new Set([
+  `https://${projectId}.web.app`,
+  `https://${projectId}.firebaseapp.com`,
+  process.env.CLIENT_URL,
+].filter(Boolean));
 
 app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin) return callback(null, true); // curl, Postman, server-to-server
-      if (process.env.NODE_ENV !== "production" && localhostPattern.test(origin)) {
-        return callback(null, true);
-      }
-      if (origin === process.env.CLIENT_URL) return callback(null, true);
-      callback(new Error(`CORS: origin "${origin}" is not allowed.`));
-    },
-    credentials: true,
+  cors((req, callback) => {
+    callback(null, {
+      origin(origin, callback) {
+        if (!origin) return callback(null, true); // curl, Postman, server-to-server
+        if (process.env.NODE_ENV !== "production" && localhostPattern.test(origin)) {
+          return callback(null, true);
+        }
+        if (origin === `${req.protocol}://${req.get("host")}`) return callback(null, true);
+        if (allowedOrigins.has(origin)) return callback(null, true);
+        callback(new Error(`CORS: origin "${origin}" is not allowed.`));
+      },
+      credentials: true,
+    });
   })
 );
 
@@ -65,9 +82,10 @@ app.use(
 app.use(express.json({ limit: "10mb" })); // 10 mb allows base64 photo uploads
 app.use(express.urlencoded({ extended: true }));
 
-// ─── Global rate limit — 200 req / 15 min per IP ─────────────────────────────
+// ─── API rate limit — 200 req / 15 min per IP ────────────────────────────────
 app.use(
-  rateLimit({
+  "/api",
+  createRateLimiter("api-global", {
     windowMs: 15 * 60 * 1000,
     max: 200,
     standardHeaders: true,
@@ -76,32 +94,50 @@ app.use(
   })
 );
 
-// ─── Sessions stored in MongoDB ───────────────────────────────────────────────
-app.use(
-  session({
-    secret: process.env.SESSION_SECRET || "dev-secret-change-in-production",
-    resave: false,
-    saveUninitialized: false,
-    store: MongoStore.create({
-      mongoUrl: process.env.MONGODB_URI,
-      ttl: 7 * 24 * 60 * 60, // 7 days
-      touchAfter: 24 * 3600,  // only update session once per day unless data changes
-    }),
-    cookie: {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
-    },
-  })
-);
+// ─── Sessions stored in Firestore ─────────────────────────────────────────────
+function getSessionMiddleware() {
+  if (!sessionMiddleware) {
+    const sessionOptions = {
+      secret: process.env.SESSION_SECRET || "dev-secret-change-in-production",
+      resave: false,
+      saveUninitialized: false,
+      cookie: {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: process.env.NODE_ENV === "production" ? "strict" : "lax",
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      },
+      store: new FirestoreSessionStore(),
+    };
+
+    sessionMiddleware = session({
+      name: "__session",
+      ...sessionOptions,
+    });
+  }
+
+  return sessionMiddleware;
+}
+
+app.use((req, res, next) => getSessionMiddleware()(req, res, next));
 
 // ─── Same-origin frontend hosting ────────────────────────────────────────────
-app.use(express.static(frontendDir));
-app.get("/", (_req, res) => res.sendFile(path.join(frontendDir, "store.html")));
-app.get("/store", (_req, res) => res.sendFile(path.join(frontendDir, "store.html")));
-app.get("/admin", (_req, res) => res.sendFile(path.join(frontendDir, "admin.html")));
-app.get("/super-admin", (_req, res) => res.sendFile(path.join(frontendDir, "super-admin.html")));
+if (hasBundledFrontend) {
+  app.use(express.static(frontendDir));
+  app.get("/", (_req, res) => res.sendFile(frontendEntry));
+  app.get("/store", (_req, res) => res.sendFile(frontendEntry));
+  app.get("/admin", (_req, res) => res.sendFile(path.join(frontendDir, "admin.html")));
+  app.get("/super-admin", (_req, res) => res.sendFile(path.join(frontendDir, "super-admin.html")));
+} else {
+  app.get("/", (_req, res) => {
+    res.json({
+      status: "ok",
+      service: "FreshCart API",
+      health: "/api/health",
+      app: "https://jsstore-b6d73.web.app",
+    });
+  });
+}
 
 // ─── CSRF protection for cookie-auth and public form posts ───────────────────
 app.use((req, res, next) => {
@@ -134,13 +170,32 @@ app.use((_req, res) => res.status(404).json({ error: "Route not found." }));
 app.use(errorHandler);
 
 // ─── Start ────────────────────────────────────────────────────────────────────
-connectDB()
-  .then(() => {
-    app.listen(PORT, () => {
-      console.log(`FreshCart API running → http://localhost:${PORT}`);
-    });
-  })
-  .catch((err) => {
-    console.error("Failed to connect to MongoDB:", err.message);
-    process.exit(1);
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`FreshCart API running -> http://localhost:${PORT}`);
   });
+}
+
+function handleApi(req, res) {
+  return app(req, res);
+}
+
+const api = onRequest(
+  {
+    region: "us-central1",
+    invoker: "public",
+    secrets: [anthropicApiKey],
+  },
+  handleApi
+);
+
+const apiAu = onRequest(
+  {
+    region: process.env.FUNCTION_REGION || "australia-southeast1",
+    invoker: "public",
+    secrets: [anthropicApiKey],
+  },
+  handleApi
+);
+
+module.exports = { app, api, apiAu };

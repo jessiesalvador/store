@@ -8,12 +8,21 @@ let currentUser  = null;   // populated from GET /api/auth/me
 let currentStore = null;   // the store this admin manages
 let allItems     = [];     // items for current store
 let allOrders    = [];     // orders for current store
+let assistantSettings = { notes: [], synonyms: [] };
+let assistantFeedback = [];
 let selectedCategory        = "all";
 let showArchived             = false;
+let bulkInventoryEditMode    = false;
+let itemOffset               = 0;
+let itemTotal                = 0;
+let isLoadingItems           = false;
 const resetToken = new URLSearchParams(window.location.search).get("resetToken");
 
 const ORDER_STATUSES = ["New", "Preparing", "Ready", "Fulfilled"];
 const money = new Intl.NumberFormat("en-AU", { style: "currency", currency: "AUD" });
+const MAX_PHOTO_BYTES = 650 * 1024;
+const MAX_PHOTO_LABEL = "650 KB";
+const ADMIN_ITEM_PAGE_SIZE = 80;
 
 function h(value) {
   return String(value ?? "")
@@ -24,8 +33,18 @@ function h(value) {
     .replace(/'/g, "&#39;");
 }
 
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener("load", () => resolve(reader.result));
+    reader.addEventListener("error", () => reject(new Error("Failed to read image file.")));
+    reader.readAsDataURL(file);
+  });
+}
+
 // ── DOM refs ──────────────────────────────────────────────────────────────────
 const els = {
+  loadingPanel:           document.querySelector("#admin-loading-panel"),
   loginPanel:             document.querySelector("#admin-login-panel"),
   content:                document.querySelector("#admin-content"),
   loginForm:              document.querySelector("#admin-login-form"),
@@ -39,17 +58,28 @@ const els = {
   resetPasswordModal:     document.querySelector("#reset-password-modal"),
   resetPasswordForm:      document.querySelector("#reset-password-form"),
   resetNewPassword:       document.querySelector("#reset-new-password"),
-  resetConfirmPassword:   document.querySelector("#reset-confirm-password"),
   resetPasswordMessage:   document.querySelector("#reset-password-message"),
   shopLink:               document.querySelector("#admin-shop-link"),
   adminStore:             document.querySelector("#admin-store"),
+  orderSettingsForm:      document.querySelector("#order-settings-form"),
+  orderEmailOtpRequired:  document.querySelector("#order-email-otp-required"),
   heroForm:               document.querySelector("#hero-form"),
   heroResetButton:        document.querySelector("#hero-reset-button"),
   itemCategory:           document.querySelector("#item-category"),
+  bulkItemForm:           document.querySelector("#bulk-item-form"),
+  bulkItemFile:           document.querySelector("#bulk-item-file"),
+  bulkItemMessage:        document.querySelector("#bulk-item-message"),
+  assistantLearningForm:  document.querySelector("#assistant-learning-form"),
+  assistantNotes:         document.querySelector("#assistant-notes"),
+  assistantSynonyms:      document.querySelector("#assistant-synonyms"),
+  assistantFeedbackList:  document.querySelector("#assistant-feedback-list"),
   inventoryCategoryFilter:document.querySelector("#inventory-category-filter"),
   adminCategoryList:      document.querySelector("#admin-category-list"),
   inventoryBody:          document.querySelector("#inventory-body"),
   inventoryCount:         document.querySelector("#inventory-count"),
+  bulkInventoryEdit:      document.querySelector("#bulk-inventory-edit"),
+  bulkInventorySave:      document.querySelector("#bulk-inventory-save"),
+  loadMoreItems:          document.querySelector("#admin-load-more-items"),
   orderList:              document.querySelector("#order-list"),
   orderCount:             document.querySelector("#order-count"),
   showArchivedOrders:     document.querySelector("#show-archived-orders"),
@@ -97,6 +127,202 @@ function option(value, label) {
   return el;
 }
 
+function storeHref(store = currentStore) {
+  return `store.html?id=${encodeURIComponent(store?.slug || store?._id || "freshcart")}`;
+}
+
+function updateShopLink() {
+  els.shopLink.href = storeHref();
+}
+
+function currentUserStoreId() {
+  const storeId = currentUser?.storeId;
+  if (!storeId) return null;
+  if (typeof storeId === "string") return storeId;
+  return storeId._id || storeId.id || null;
+}
+
+function hasCurrentStore(message = "No store is assigned to this admin account.") {
+  if (currentStore?._id) return true;
+  showToast(message);
+  return false;
+}
+
+function renderStoreUnavailable(message = "No store is assigned to this admin account.") {
+  currentStore = null;
+  allItems = [];
+  allOrders = [];
+  itemOffset = 0;
+  itemTotal = 0;
+  bulkInventoryEditMode = false;
+
+  els.adminStore.replaceChildren(option("", "No assigned store"));
+  els.itemCategory.replaceChildren(option("", "No assigned store"));
+  els.inventoryCategoryFilter.replaceChildren(option("all", "All categories"));
+  els.adminCategoryList.innerHTML = `<span class="empty-state">${h(message)}</span>`;
+  els.inventoryCount.textContent = "0 items";
+  els.bulkInventoryEdit.disabled = true;
+  els.bulkInventoryEdit.textContent = "Bulk update";
+  els.bulkInventorySave.disabled = true;
+  els.inventoryBody.innerHTML = `<tr><td colspan="7"><div class="empty-state">${h(message)}</div></td></tr>`;
+  els.orderCount.textContent = "0 orders";
+  els.orderList.innerHTML = `<div class="empty-state">${h(message)}</div>`;
+  els.loadMoreItems.classList.add("hidden");
+  updateShopLink();
+}
+
+function visibleInventoryItems() {
+  return allItems;
+}
+
+function adminItemQuery(offset = 0) {
+  const query = new URLSearchParams({
+    limit: String(ADMIN_ITEM_PAGE_SIZE),
+    offset: String(offset),
+  });
+  if (selectedCategory !== "all") query.set("category", selectedCategory);
+  return query.toString();
+}
+
+function orderQuery() {
+  return new URLSearchParams({ archived: String(showArchived) }).toString();
+}
+
+function updateAdminLoadMoreButton() {
+  const hasMore = allItems.length < itemTotal;
+  els.loadMoreItems.classList.toggle("hidden", !hasMore);
+  els.loadMoreItems.disabled = isLoadingItems;
+  els.loadMoreItems.textContent = hasMore
+    ? `Load more items (${allItems.length} of ${itemTotal})`
+    : "Load more items";
+}
+
+async function loadInventoryItems({ reset = false } = {}) {
+  if (!currentStore || isLoadingItems) return;
+  isLoadingItems = true;
+  els.loadMoreItems.disabled = true;
+  els.loadMoreItems.textContent = reset ? "Loading..." : "Loading more...";
+
+  const nextOffset = reset ? 0 : itemOffset;
+  try {
+    const itemsData = await api.get(`/stores/${currentStore._id}/items?${adminItemQuery(nextOffset)}`);
+    allItems = reset ? itemsData.items : [...allItems, ...itemsData.items];
+    itemOffset = allItems.length;
+    itemTotal = Number(itemsData.total || allItems.length);
+    renderInventory();
+  } catch (err) {
+    showToast(err.message || "Failed to load inventory.");
+  } finally {
+    isLoadingItems = false;
+    updateAdminLoadMoreButton();
+  }
+}
+
+async function loadOrders() {
+  if (!currentStore?._id) return;
+  const ordersData = await api.get(`/stores/${currentStore._id}/orders?${orderQuery()}`);
+  allOrders = ordersData.orders || [];
+  renderOrders();
+}
+
+function categoryOptionsHtml(selected) {
+  return currentStore.categories
+    .map((category) => `<option value="${h(category)}"${category === selected ? " selected" : ""}>${h(category)}</option>`)
+    .join("");
+}
+
+function parseCsvRows(text) {
+  const rows = [];
+  let row = [];
+  let cell = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < text.length; i += 1) {
+    const char = text[i];
+    const next = text[i + 1];
+
+    if (char === '"' && inQuotes && next === '"') {
+      cell += '"';
+      i += 1;
+    } else if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === "," && !inQuotes) {
+      row.push(cell.trim());
+      cell = "";
+    } else if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") i += 1;
+      row.push(cell.trim());
+      if (row.some(Boolean)) rows.push(row);
+      row = [];
+      cell = "";
+    } else {
+      cell += char;
+    }
+  }
+
+  row.push(cell.trim());
+  if (row.some(Boolean)) rows.push(row);
+  return rows;
+}
+
+function parseBulkItems(text) {
+  const rows = parseCsvRows(text);
+  if (!rows.length) throw new Error("The CSV file is empty.");
+
+  const firstRow = rows[0].map((value) => value.toLowerCase().replace(/\s+/g, ""));
+  const hasHeader =
+    firstRow.includes("name") ||
+    firstRow.includes("itemname") ||
+    firstRow.includes("category") ||
+    firstRow.includes("price");
+  const dataRows = hasHeader ? rows.slice(1) : rows;
+  const indexes = hasHeader
+    ? {
+        name: firstRow.findIndex((value) => value === "name" || value === "itemname"),
+        category: firstRow.findIndex((value) => value === "category"),
+        price: firstRow.findIndex((value) => value === "price"),
+      }
+    : { name: 0, category: 1, price: 2 };
+
+  if (indexes.name < 0 || indexes.category < 0 || indexes.price < 0) {
+    throw new Error("CSV must include item name, category, and price columns.");
+  }
+
+  const items = dataRows.map((row, index) => {
+    const name = String(row[indexes.name] || "").trim();
+    const category = String(row[indexes.category] || "").trim();
+    const price = Number(String(row[indexes.price] || "").replace(/[$,]/g, ""));
+    if (!name || !category || !Number.isFinite(price) || price <= 0) {
+      throw new Error(`Row ${index + (hasHeader ? 2 : 1)} has an invalid item name, category, or price.`);
+    }
+    return { name, category, price };
+  });
+
+  if (!items.length) throw new Error("CSV must include at least one item row.");
+  return items;
+}
+
+function parseAssistantNotes(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function parseAssistantSynonyms(text) {
+  return String(text || "")
+    .split(/\r?\n/)
+    .map((line) => {
+      const [term, ...rest] = line.split("=");
+      return { term: String(term || "").trim(), mapsTo: rest.join("=").trim() };
+    })
+    .filter((entry) => entry.term && entry.mapsTo);
+}
+
+function formatAssistantSynonyms(synonyms = []) {
+  return synonyms.map((entry) => `${entry.term} = ${entry.mapsTo}`).join("\n");
+}
+
 function heroDefaults(store = currentStore) {
   return {
     eyebrow: "Fresh & local",
@@ -116,10 +342,43 @@ function fillHeroForm() {
   els.heroForm.elements.heroDetail.value = hero.detail || defaults.detail;
 }
 
+function fillOrderSettings() {
+  if (!currentStore) return;
+  els.orderEmailOtpRequired.checked = Boolean(currentStore.orderEmailOtpRequired);
+}
+
+function fillAssistantLearningForm() {
+  els.assistantNotes.value = (assistantSettings.notes || []).join("\n");
+  els.assistantSynonyms.value = formatAssistantSynonyms(assistantSettings.synonyms || []);
+}
+
+function renderAssistantFeedback() {
+  if (!assistantFeedback.length) {
+    els.assistantFeedbackList.innerHTML = `<div class="empty-state">No assistant feedback yet.</div>`;
+    return;
+  }
+
+  els.assistantFeedbackList.replaceChildren(...assistantFeedback.map((item) => {
+    const card = document.createElement("article");
+    card.className = "assistant-feedback-card";
+    const sentAt = item.createdAt ? new Date(item.createdAt).toLocaleString() : "";
+    card.innerHTML = `
+      <div class="meta-row">
+        <strong>${item.rating === "up" ? "Helpful" : "Needs work"}</strong>
+        <small>${h(sentAt)}</small>
+      </div>
+      <p><strong>Asked:</strong> ${h(item.question || "")}</p>
+      <p><strong>Answer:</strong> ${h(item.answer || "")}</p>
+      ${item.note ? `<p><strong>Note:</strong> ${h(item.note)}</p>` : ""}`;
+    return card;
+  }));
+}
+
 // ── Render inventory ──────────────────────────────────────────────────────────
 function renderInventory() {
   if (!currentStore) return;
   fillHeroForm();
+  fillOrderSettings();
 
   // Category selects
   els.itemCategory.replaceChildren(...currentStore.categories.map((c) => option(c, c)));
@@ -152,23 +411,40 @@ function renderInventory() {
     })
   );
 
-  const filtered = selectedCategory === "all"
-    ? allItems
-    : allItems.filter((i) => i.category === selectedCategory);
-
-  els.inventoryCount.textContent = `${filtered.length} ${filtered.length === 1 ? "item" : "items"}`;
+  const filtered = visibleInventoryItems();
 
   if (!filtered.length) {
+    bulkInventoryEditMode = false;
+    els.inventoryCount.textContent = itemTotal ? `Showing 0 of ${itemTotal} items` : "0 items";
+    els.bulkInventoryEdit.disabled = true;
+    els.bulkInventoryEdit.textContent = "Bulk update";
+    els.bulkInventorySave.disabled = true;
     els.inventoryBody.innerHTML = `<tr><td colspan="7"><div class="empty-state">No items in this category yet.</div></td></tr>`;
+    updateAdminLoadMoreButton();
     return;
   }
+
+  els.inventoryCount.textContent = itemTotal > filtered.length
+    ? `Showing ${filtered.length} of ${itemTotal} items`
+    : `${filtered.length} ${filtered.length === 1 ? "item" : "items"}`;
+  els.bulkInventoryEdit.disabled = false;
+  els.bulkInventoryEdit.textContent = bulkInventoryEditMode ? "Cancel bulk update" : "Bulk update";
+  els.bulkInventorySave.disabled = !bulkInventoryEditMode;
 
   els.inventoryBody.replaceChildren(...filtered.map((item) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
       <td><img class="inventory-photo" src="${h(item.photo)}" alt="${h(item.name)}"></td>
-      <td>${h(item.name)}</td>
-      <td>${h(item.category)}</td>
+      <td>${
+        bulkInventoryEditMode
+          ? `<label class="sr-only" for="name-${item._id}">Item name for ${h(item.name)}</label><input id="name-${item._id}" class="item-name-input" data-name="${item._id}" value="${h(item.name)}" maxlength="120">`
+          : h(item.name)
+      }</td>
+      <td>${
+        bulkInventoryEditMode
+          ? `<label class="sr-only" for="category-${item._id}">Category for ${h(item.name)}</label><select id="category-${item._id}" class="item-category-input" data-category="${item._id}">${categoryOptionsHtml(item.category)}</select>`
+          : h(item.category)
+      }</td>
       <td>
         <label class="sr-only" for="price-${item._id}">Price for ${h(item.name)}</label>
         <input id="price-${item._id}" class="price-input" data-price="${item._id}" type="number" min="0.01" step="0.01" value="${Number(item.price).toFixed(2)}">
@@ -189,6 +465,7 @@ function renderInventory() {
       </td>`;
     return tr;
   }));
+  updateAdminLoadMoreButton();
 }
 
 // ── Render orders ─────────────────────────────────────────────────────────────
@@ -257,19 +534,22 @@ function renderOrders() {
 
 // ── Full re-render ────────────────────────────────────────────────────────────
 async function loadAndRender() {
-  if (!currentStore) return;
-  els.shopLink.href = `store.html?id=${encodeURIComponent(currentStore.slug)}`;
+  if (!currentStore?._id) {
+    renderStoreUnavailable();
+    return;
+  }
+  updateShopLink();
   els.adminStore.replaceChildren(option(currentStore._id, `${currentStore.name} - ${currentStore.location}`));
 
   try {
-    const [itemsData, ordersData] = await Promise.all([
-      api.get(`/stores/${currentStore._id}/items`),
-      api.get(`/stores/${currentStore._id}/orders`),
+    const [assistantData] = await Promise.all([
+      api.get(`/stores/${currentStore._id}/assistant-settings`),
     ]);
-    allItems  = itemsData.items;
-    allOrders = ordersData.orders;
-    renderInventory();
-    renderOrders();
+    assistantSettings = assistantData.settings || { notes: [], synonyms: [] };
+    assistantFeedback = assistantData.feedback || [];
+    fillAssistantLearningForm();
+    renderAssistantFeedback();
+    await Promise.all([loadOrders(), loadInventoryItems({ reset: true })]);
   } catch (err) {
     showToast(err.message || "Failed to load store data.");
   }
@@ -277,14 +557,31 @@ async function loadAndRender() {
 
 // ── Login ─────────────────────────────────────────────────────────────────────
 async function unlockAdmin() {
+  els.loadingPanel.classList.add("hidden");
   els.loginPanel.classList.add("hidden");
   els.content.classList.remove("hidden");
   els.logoutButton.classList.remove("hidden");
 
   // Load the store this admin manages
+  const storeId = currentUserStoreId();
+  if (!storeId) {
+    renderStoreUnavailable();
+    showToast("No store is assigned to this admin account.");
+    return;
+  }
+
   const storesData = await api.get("/stores");
-  currentStore = storesData.stores.find((s) => s._id === currentUser.storeId?.toString()
-    || s._id === currentUser.storeId);
+  currentStore = storesData.stores.find((s) => s._id === storeId || s.id === storeId) || null;
+  if (!currentStore) {
+    try {
+      const storeData = await api.get(`/stores/${storeId}`);
+      currentStore = storeData.store;
+    } catch {
+      renderStoreUnavailable("The assigned store could not be loaded.");
+      showToast("The assigned store could not be loaded.");
+      return;
+    }
+  }
 
   if (currentUser.mustChangePassword) {
     setTimeout(() => els.changePasswordModal.showModal(), 320);
@@ -304,6 +601,11 @@ async function logoutAdmin() {
   currentStore = null;
   allItems = [];
   allOrders = [];
+  itemOffset = 0;
+  itemTotal = 0;
+  assistantSettings = { notes: [], synonyms: [] };
+  assistantFeedback = [];
+  els.loadingPanel.classList.add("hidden");
   els.content.classList.add("hidden");
   els.loginPanel.classList.remove("hidden");
   els.logoutButton.classList.add("hidden");
@@ -312,6 +614,20 @@ async function logoutAdmin() {
 }
 
 els.logoutButton.addEventListener("click", logoutAdmin);
+
+els.shopLink.addEventListener("click", async (event) => {
+  if (!currentStore?._id) return;
+  event.preventDefault();
+
+  try {
+    const data = await api.get(`/stores/${currentStore._id}`);
+    currentStore = data.store;
+    updateShopLink();
+    window.location.href = storeHref();
+  } catch (err) {
+    showToast(err.message || "Failed to open the latest shop URL.");
+  }
+});
 
 els.forgotPasswordButton.addEventListener("click", () => {
   const loginEmail = new FormData(els.loginForm).get("email") || "";
@@ -343,14 +659,9 @@ els.resetPasswordForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   els.resetPasswordMessage.classList.add("hidden");
   const newPassword = els.resetNewPassword.value;
-  const confirmPassword = els.resetConfirmPassword.value;
 
   if (newPassword.length < 8) {
     showFormMessage(els.resetPasswordMessage, "Password must be at least 8 characters.");
-    return;
-  }
-  if (newPassword !== confirmPassword) {
-    showFormMessage(els.resetPasswordMessage, "Passwords do not match.");
     return;
   }
 
@@ -458,21 +769,69 @@ els.heroResetButton.addEventListener("click", async () => {
   }
 });
 
+els.orderSettingsForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!currentStore) return;
+
+  try {
+    const data = await api.patch(`/stores/${currentStore._id}`, {
+      orderEmailOtpRequired: els.orderEmailOtpRequired.checked,
+    });
+    currentStore = data.store;
+    fillOrderSettings();
+    showToast("Order settings saved.");
+  } catch (err) {
+    showToast(err.message || "Failed to save order settings.");
+  }
+});
+
+els.assistantLearningForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!currentStore) return;
+
+  const submitButton = els.assistantLearningForm.querySelector("button[type='submit']");
+  submitButton.disabled = true;
+  submitButton.textContent = "Saving...";
+
+  try {
+    const data = await api.patch(`/stores/${currentStore._id}/assistant-settings`, {
+      notes: parseAssistantNotes(els.assistantNotes.value),
+      synonyms: parseAssistantSynonyms(els.assistantSynonyms.value),
+    });
+    assistantSettings = data.settings || { notes: [], synonyms: [] };
+    fillAssistantLearningForm();
+    showToast("Assistant learning saved.");
+  } catch (err) {
+    showToast(err.message || "Failed to save assistant learning.");
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = "Save assistant learning";
+  }
+});
+
 // ── Category filter ───────────────────────────────────────────────────────────
 els.inventoryCategoryFilter.addEventListener("change", () => {
   selectedCategory = els.inventoryCategoryFilter.value;
-  renderInventory();
+  bulkInventoryEditMode = false;
+  loadInventoryItems({ reset: true });
 });
 
-els.showArchivedOrders.addEventListener("change", () => {
+els.loadMoreItems.addEventListener("click", () => loadInventoryItems());
+
+els.showArchivedOrders.addEventListener("change", async () => {
   showArchived = els.showArchivedOrders.checked;
-  renderOrders();
+  try {
+    await loadOrders();
+  } catch (err) {
+    showToast(err.message || "Failed to load orders.");
+  }
 });
 
 els.adminCategoryList.addEventListener("click", async (event) => {
   if (!(event.target instanceof Element)) return;
   const button = event.target.closest("[data-remove-category]");
   if (!button) return;
+  if (!hasCurrentStore()) return;
 
   const category = button.dataset.removeCategory;
   if (!category) return;
@@ -498,7 +857,7 @@ els.adminCategoryList.addEventListener("click", async (event) => {
     });
     currentStore = data.store;
     if (selectedCategory === category) selectedCategory = "all";
-    renderInventory();
+    await loadInventoryItems({ reset: true });
     showToast("Category removed.");
   } catch (err) {
     button.disabled = false;
@@ -509,6 +868,8 @@ els.adminCategoryList.addEventListener("click", async (event) => {
 // ── Add category ──────────────────────────────────────────────────────────────
 document.querySelector("#category-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!hasCurrentStore()) return;
+
   const formEl   = event.currentTarget;
   const form     = new FormData(formEl);
   const category = form.get("categoryName").trim();
@@ -528,7 +889,7 @@ document.querySelector("#category-form").addEventListener("submit", async (event
     currentStore = data.store;
     selectedCategory = category;
     formEl.reset();
-    renderInventory();
+    await loadInventoryItems({ reset: true });
     els.itemCategory.value = category;
     showToast("Category added.");
   } catch (err) {
@@ -539,6 +900,8 @@ document.querySelector("#category-form").addEventListener("submit", async (event
 // ── Add item ──────────────────────────────────────────────────────────────────
 document.querySelector("#item-form").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (!hasCurrentStore()) return;
+
   const formEl  = event.currentTarget;
   const formData = new FormData(formEl);
   const name     = formData.get("itemName").trim();
@@ -548,22 +911,168 @@ document.querySelector("#item-form").addEventListener("submit", async (event) =>
   if (!name)               { showToast("Please enter an item name."); return; }
   if (!price || price <= 0){ showToast("Please enter a valid price."); return; }
 
-  // Build multipart form for API (handles optional photo)
-  const body = new FormData();
-  body.append("name",     name);
-  body.append("category", category);
-  body.append("price",    price);
   const photoFile = formData.get("photo");
-  if (photoFile instanceof File && photoFile.size > 0) body.append("photo", photoFile);
+  let photoDataUrl = null;
+  if (photoFile instanceof File && photoFile.size > 0) {
+    if (photoFile.size > MAX_PHOTO_BYTES) {
+      showToast(`Photo must be ${MAX_PHOTO_LABEL} or smaller.`);
+      return;
+    }
+    if (!photoFile.type.startsWith("image/")) {
+      showToast("Photo must be an image file.");
+      return;
+    }
+    photoDataUrl = await fileToDataUrl(photoFile);
+  }
 
   try {
-    await api.postForm(`/stores/${currentStore._id}/items`, body);
+    await api.post(`/stores/${currentStore._id}/items`, { name, category, price, photoDataUrl });
     selectedCategory = category;
     formEl.reset();
-    await loadAndRender();
+    await loadInventoryItems({ reset: true });
     showItemSuccess(`"${name}" added to ${category}.`);
   } catch (err) {
     showToast(err.message || "Failed to add item.");
+  }
+});
+
+// ── Bulk item upload ─────────────────────────────────────────────────────────
+els.bulkItemForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  els.bulkItemMessage.classList.add("hidden");
+
+  if (!hasCurrentStore("No store is assigned to this admin account.")) {
+    showFormMessage(els.bulkItemMessage, "No store is assigned to this admin account.");
+    return;
+  }
+
+  const file = els.bulkItemFile.files[0];
+  if (!file) {
+    showFormMessage(els.bulkItemMessage, "Please choose a CSV file.");
+    return;
+  }
+
+  const submitButton = els.bulkItemForm.querySelector("button[type='submit']");
+  submitButton.disabled = true;
+  submitButton.textContent = "Uploading...";
+
+  try {
+    const items = parseBulkItems(await file.text());
+    const data = await api.post(`/stores/${currentStore._id}/items/bulk`, { items });
+    if (data.categories) currentStore = { ...currentStore, categories: data.categories };
+    selectedCategory = "all";
+    els.bulkItemForm.reset();
+    await loadInventoryItems({ reset: true });
+    showFormMessage(
+      els.bulkItemMessage,
+      `Imported ${items.length} ${items.length === 1 ? "item" : "items"}.`,
+      false
+    );
+    showToast(`Imported ${items.length} ${items.length === 1 ? "item" : "items"}.`);
+  } catch (err) {
+    showFormMessage(els.bulkItemMessage, err.message || "Failed to upload item list.");
+  } finally {
+    submitButton.disabled = false;
+    submitButton.textContent = "Upload item list";
+  }
+});
+
+function itemUpdatePayload(id) {
+  const item = allItems.find((candidate) => candidate._id === id);
+  const nameInput = els.inventoryBody.querySelector(`[data-name="${id}"]`);
+  const categoryInput = els.inventoryBody.querySelector(`[data-category="${id}"]`);
+  const priceInput = els.inventoryBody.querySelector(`[data-price="${id}"]`);
+  const photoInput = els.inventoryBody.querySelector(`[data-photo="${id}"]`);
+  const soldOutInput = els.inventoryBody.querySelector(`[data-sold-out="${id}"]`);
+  const nextName = String(nameInput?.value ?? item?.name ?? "").trim();
+  const nextCategory = String(categoryInput?.value ?? item?.category ?? "").trim();
+  const nextPrice = Number(priceInput.value);
+
+  if (!nextName) throw new Error("Enter an item name before updating.");
+  if (!nextCategory) throw new Error("Choose a category before updating.");
+  if (!Number.isFinite(nextPrice) || nextPrice <= 0) {
+    throw new Error("Enter a valid price before updating.");
+  }
+
+  const photoFile = photoInput.files[0];
+  if (photoFile) {
+    if (!photoFile.type.startsWith("image/")) throw new Error("Replacement photo must be an image file.");
+  }
+
+  return {
+    name: nextName,
+    category: nextCategory,
+    price: nextPrice,
+    soldOut: soldOutInput.checked,
+    photoFile,
+  };
+}
+
+function hasItemChanges(item, payload) {
+  return (
+    payload.name !== item.name ||
+    payload.category !== item.category ||
+    Number(payload.price) !== Number(item.price) ||
+    Boolean(payload.soldOut) !== Boolean(item.soldOut) ||
+    Boolean(payload.photoFile)
+  );
+}
+
+async function saveItemUpdate(id, payload = itemUpdatePayload(id)) {
+  if (!hasCurrentStore()) throw new Error("No store is assigned to this admin account.");
+  const path = `/stores/${currentStore._id}/items/${id}`;
+  let photoDataUrl = null;
+  if (payload.photoFile && payload.photoFile.size > MAX_PHOTO_BYTES) {
+    throw new Error(`Photo must be ${MAX_PHOTO_LABEL} or smaller.`);
+  }
+  if (payload.photoFile) {
+    photoDataUrl = await fileToDataUrl(payload.photoFile);
+  }
+
+  await api.patch(path, {
+    name: payload.name,
+    category: payload.category,
+    price: payload.price,
+    soldOut: payload.soldOut,
+  });
+
+  if (payload.photoFile) {
+    return api.post(`${path}/photo`, { photoDataUrl });
+  }
+}
+
+els.bulkInventoryEdit.addEventListener("click", () => {
+  bulkInventoryEditMode = !bulkInventoryEditMode;
+  renderInventory();
+});
+
+els.bulkInventorySave.addEventListener("click", async () => {
+  if (!hasCurrentStore()) return;
+
+  const updates = visibleInventoryItems()
+    .map((item) => ({ item, payload: itemUpdatePayload(item._id) }))
+    .filter(({ item, payload }) => hasItemChanges(item, payload));
+
+  if (!updates.length) {
+    showToast("No inventory changes to save.");
+    return;
+  }
+
+  els.bulkInventorySave.disabled = true;
+  els.bulkInventorySave.textContent = "Saving...";
+
+  try {
+    for (const { item, payload } of updates) {
+      await saveItemUpdate(item._id, payload);
+    }
+    bulkInventoryEditMode = false;
+    await loadInventoryItems({ reset: true });
+    showToast(`Saved ${updates.length} changed ${updates.length === 1 ? "item" : "items"}.`);
+  } catch (err) {
+    showToast(err.message || "Failed to save inventory updates.");
+  } finally {
+    els.bulkInventorySave.textContent = "Bulk save";
+    renderInventory();
   }
 });
 
@@ -573,29 +1082,11 @@ els.inventoryBody.addEventListener("click", async (event) => {
   const deleteBtn = event.target.closest("[data-delete-item]");
 
   if (updateBtn) {
-    const id         = updateBtn.dataset.updateItem;
-    const priceInput = els.inventoryBody.querySelector(`[data-price="${id}"]`);
-    const photoInput = els.inventoryBody.querySelector(`[data-photo="${id}"]`);
-    const soldOutInput = els.inventoryBody.querySelector(`[data-sold-out="${id}"]`);
-    const nextPrice  = Number(priceInput.value);
-
-    if (!Number.isFinite(nextPrice) || nextPrice <= 0) {
-      showToast("Enter a valid price before updating.");
-      return;
-    }
-
-    const body = new FormData();
-    body.append("price",   nextPrice);
-    body.append("soldOut", soldOutInput.checked);
-    const photoFile = photoInput.files[0];
-    if (photoFile) {
-      if (!photoFile.type.startsWith("image/")) { showToast("Replacement photo must be an image file."); return; }
-      body.append("photo", photoFile);
-    }
+    const id = updateBtn.dataset.updateItem;
 
     try {
-      await api.patchForm(`/stores/${currentStore._id}/items/${id}`, body);
-      await loadAndRender();
+      await saveItemUpdate(id);
+      await loadInventoryItems({ reset: true });
       showToast("Item updated.");
     } catch (err) {
       showToast(err.message || "Failed to update item.");
@@ -606,7 +1097,7 @@ els.inventoryBody.addEventListener("click", async (event) => {
     const id = deleteBtn.dataset.deleteItem;
     try {
       await api.delete(`/stores/${currentStore._id}/items/${id}`);
-      await loadAndRender();
+      await loadInventoryItems({ reset: true });
       showToast("Item deleted.");
     } catch (err) {
       showToast(err.message || "Failed to delete item.");
@@ -683,6 +1174,8 @@ els.orderList.addEventListener("click", async (event) => {
 // ── Boot — restore session or show login ──────────────────────────────────────
 async function boot() {
   if (resetToken) {
+    els.loadingPanel.classList.add("hidden");
+    els.loginPanel.classList.remove("hidden");
     els.resetPasswordModal.showModal();
     return;
   }
@@ -692,7 +1185,8 @@ async function boot() {
     currentUser = data.user;
     await unlockAdmin();
   } catch {
-    // Not logged in — show login panel (already visible by default)
+    els.loadingPanel.classList.add("hidden");
+    els.loginPanel.classList.remove("hidden");
   }
 }
 

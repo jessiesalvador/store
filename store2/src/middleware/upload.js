@@ -1,21 +1,21 @@
 const multer = require("multer");
 
-// Store in memory — we convert to base64 for the Item.photo field.
-// For production, swap storage for multer-s3 or similar.
+// Store in memory briefly so route handlers can upload images to Firebase Storage.
 const storage = multer.memoryStorage();
 
 const fileFilter = (_req, file, cb) => {
   if (file.mimetype.startsWith("image/")) {
     cb(null, true);
   } else {
-    cb(new Error("Only image files are accepted."), false);
+    cb(Object.assign(new Error("Only image files are accepted."), { status: 400 }), false);
   }
 };
 
 const upload = multer({
   storage,
   fileFilter,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  // Keep item photos small for fast storefront/admin rendering.
+  limits: { fileSize: 650 * 1024 },
 });
 
 module.exports = { upload };
