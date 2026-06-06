@@ -53,22 +53,3 @@ jobs:
               required_contexts: [],
               production_environment: true
             })
-
-      - name: Slack notification
-        if: always()
-        uses: slackapi/slack-github-action@v1
-        with:
-          webhook-url: ${{ secrets.SLACK_WEBHOOK }}
-          payload: |
-            {
-              "text": "Production Deployment: ${{ job.status }}",
-              "blocks": [
-                {
-                  "type": "section",
-                  "text": {
-                    "type": "mrkdwn",
-                    "text": "*Production Deployment: ${{ job.status }}*\nCommit: ${{ github.sha }}\nAuthor: ${{ github.actor }}"
-                  }
-                }
-              ]
-            }
