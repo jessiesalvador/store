@@ -35,9 +35,9 @@ jobs:
         run: |
           echo $FIREBASE_SERVICE_ACCOUNT | base64 -d > /tmp/service-account.json
           firebase deploy \
-            --project=jsstore-staging \
-            --token=$(firebase login:ci --no-localhost 2>/dev/null || echo $FIREBASE_TOKEN)
-            --only hosting,functions
+          --project=jsstore-staging \
+          --token=$(firebase login:ci --no-localhost 2>/dev/null || echo $FIREBASE_TOKEN) \
+          --only hosting,functions
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
