@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "default": "jsstore-staging",
+    "staging": "jsstore-staging",
+    "production": "jsstore-b6d73"
+  }
+}

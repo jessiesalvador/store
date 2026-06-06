@@ -1,0 +1,52 @@
+{
+  "functions": [
+    {
+      "source": "store2",
+      "codebase": "default",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ],
+  "firestore": {
+    "indexes": "firestore.indexes.json"
+  },
+  "hosting": {
+    "public": "store",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "cleanUrls": true,
+    "rewrites": [
+      {
+        "source": "/api/**",
+        "function": {
+          "functionId": "apiAu",
+          "region": "australia-southeast1"
+        }
+      },
+      {
+        "source": "/store",
+        "destination": "/store.html"
+      },
+      {
+        "source": "/admin",
+        "destination": "/admin.html"
+      },
+      {
+        "source": "/super-admin",
+        "destination": "/super-admin.html"
+      },
+      {
+        "source": "**",
+        "destination": "/store.html"
+      }
+    ]
+  }
+}

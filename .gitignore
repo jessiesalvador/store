@@ -1,0 +1,9 @@
+.DS_Store
+node_modules/
+.env
+store2/.env
+store2/node_modules/
+store/.git-backup/
+store2/mnt/
+gha-creds-*.json
+jsstore-*.json
