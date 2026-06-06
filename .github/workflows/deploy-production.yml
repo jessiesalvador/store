@@ -33,12 +33,13 @@ jobs:
 
       - name: Deploy to Firebase Production
         run: |
+          echo $FIREBASE_SERVICE_ACCOUNT | base64 -d > /tmp/service-account.json
           firebase deploy \
-            --project=${{ secrets.FIREBASE_PROJECT_ID }} \
-            --token=${{ secrets.FIREBASE_TOKEN }} \
+            --project=jsstore-staging \
+            --token=$(firebase login:ci --no-localhost 2>/dev/null || echo $FIREBASE_TOKEN)
             --only hosting,functions
         env:
-          FIREBASE_CLI_EXPERIMENTS: webframeworks
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
 
       - name: Create deployment status check
         if: success()
