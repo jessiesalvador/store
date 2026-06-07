@@ -231,7 +231,7 @@ els.resetPasswordForm.addEventListener("submit", async (event) => {
   }
 
   try {
-    const data = await api.post("/auth/reset-password", { token: resetToken, newPassword });
+    const data = await api.resetPassword(resetToken, newPassword);
     els.resetPasswordModal.close();
     els.resetPasswordForm.reset();
     history.replaceState({}, "", location.pathname);
@@ -244,11 +244,9 @@ els.resetPasswordForm.addEventListener("submit", async (event) => {
 els.loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
+  const password = form.get("password");
   try {
-    const data = await api.post("/auth/login", {
-      email:    form.get("email").trim().toLowerCase(),
-      password: form.get("password"),
-    });
+    const data = await api.login(form.get("email").trim().toLowerCase(), password);
     if (data.user.role !== "super-admin") {
       showToast("This login is for the super admin only.");
       await api.post("/auth/logout", {});
@@ -258,6 +256,8 @@ els.loginForm.addEventListener("submit", async (event) => {
     await unlockSuperAdmin();
   } catch (err) {
     showToast(err.message || "Invalid email or password.");
+  } finally {
+    event.currentTarget.elements.password.value = "";
   }
 });
 

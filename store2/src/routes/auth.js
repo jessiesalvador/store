@@ -8,6 +8,7 @@ const { col, fromQuery, getById, updateDoc } = require("../utils/firestoreData")
 
 const router = express.Router();
 const SALT_ROUNDS = 12;
+const PASSWORD_KEY_TTL_MS = 5 * 60 * 1000;
 
 // Strict rate limit on login — 10 attempts per 15 minutes per IP
 const loginLimiter = createRateLimiter("auth-login", {
@@ -28,6 +29,83 @@ const passwordResetLimiter = createRateLimiter("auth-password-reset", {
 
 function hashResetToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+function authError(message, status = 400) {
+  return Object.assign(new Error(message), { status });
+}
+
+function base64UrlToBuffer(value) {
+  const input = String(value || "");
+  if (!/^[A-Za-z0-9_-]+$/.test(input)) throw authError("Secure password payload is invalid.");
+  const base64 = input.replace(/-/g, "+").replace(/_/g, "/");
+  return Buffer.from(base64.padEnd(Math.ceil(base64.length / 4) * 4, "="), "base64");
+}
+
+async function createPasswordKey() {
+  const id = crypto.randomBytes(16).toString("base64url");
+  const keyPair = await crypto.webcrypto.subtle.generateKey(
+    {
+      name: "RSA-OAEP",
+      modulusLength: 2048,
+      publicExponent: new Uint8Array([1, 0, 1]),
+      hash: "SHA-256",
+    },
+    true,
+    ["encrypt", "decrypt"]
+  );
+  const [publicKey, privateKey] = await Promise.all([
+    crypto.webcrypto.subtle.exportKey("jwk", keyPair.publicKey),
+    crypto.webcrypto.subtle.exportKey("jwk", keyPair.privateKey),
+  ]);
+
+  return {
+    id,
+    publicKey: { ...publicKey, kid: id, alg: "RSA-OAEP-256", key_ops: ["encrypt"] },
+    privateKey: { ...privateKey, kid: id, alg: "RSA-OAEP-256", key_ops: ["decrypt"] },
+  };
+}
+
+async function decryptPasswordPayload(req) {
+  const envelope = req.body?.passwordPayload;
+  if (!envelope) return {};
+
+  const loginKey = req.session?.passwordLoginKey;
+  const now = Date.now();
+  try {
+    if (!loginKey || loginKey.id !== req.body.loginKeyId || Number(loginKey.expiresAt || 0) < now) {
+      throw authError("Secure password key expired. Please try again.");
+    }
+
+    const privateKey = await crypto.webcrypto.subtle.importKey(
+      "jwk",
+      loginKey.privateKey,
+      { name: "RSA-OAEP", hash: "SHA-256" },
+      false,
+      ["decrypt"]
+    );
+    const rawAesKey = await crypto.webcrypto.subtle.decrypt(
+      { name: "RSA-OAEP" },
+      privateKey,
+      base64UrlToBuffer(envelope.keyCiphertext)
+    );
+    const aesKey = await crypto.webcrypto.subtle.importKey("raw", rawAesKey, "AES-GCM", false, ["decrypt"]);
+    const decrypted = await crypto.webcrypto.subtle.decrypt(
+      { name: "AES-GCM", iv: base64UrlToBuffer(envelope.iv) },
+      aesKey,
+      base64UrlToBuffer(envelope.ciphertext)
+    );
+    const payload = JSON.parse(Buffer.from(decrypted).toString("utf8"));
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw authError("Secure password payload is invalid.");
+    }
+    return payload;
+  } catch (err) {
+    if (err.status) throw err;
+    throw authError("Secure password payload is invalid.");
+  } finally {
+    delete req.session.passwordLoginKey;
+  }
 }
 
 function clientBaseUrl(req) {
@@ -73,15 +151,39 @@ router.get("/csrf", (req, res) => {
   });
 });
 
+// ─── GET /api/auth/login-key — short-lived password encryption key ───────────
+router.get("/login-key", async (req, res, next) => {
+  try {
+    const key = await createPasswordKey();
+    req.session.passwordLoginKey = {
+      id: key.id,
+      privateKey: key.privateKey,
+      expiresAt: Date.now() + PASSWORD_KEY_TTL_MS,
+    };
+    req.session.save((err) => {
+      if (err) return next(err);
+      res.json({
+        keyId: key.id,
+        publicKey: key.publicKey,
+        expiresInMs: PASSWORD_KEY_TTL_MS,
+      });
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 // ─── POST /api/auth/login ─────────────────────────────────────────────────────
 router.post("/login", loginLimiter, async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const secrets = await decryptPasswordPayload(req);
+    const email = String(req.body.email || "").trim().toLowerCase();
+    const password = secrets.password;
 
     if (!email || !password) {
       return res.status(400).json({ error: "Email and password are required." });
     }
-    const user = await findUserByEmail(email.trim().toLowerCase());
+    const user = await findUserByEmail(email);
     if (!user || !(await verifyPassword(user, password))) {
       return res.status(401).json({ error: "Invalid email or password." });
     }
@@ -152,7 +254,9 @@ router.post("/forgot-password", passwordResetLimiter, async (req, res, next) => 
 // ─── POST /api/auth/reset-password ───────────────────────────────────────────
 router.post("/reset-password", passwordResetLimiter, async (req, res, next) => {
   try {
-    const { token, newPassword } = req.body;
+    const secrets = await decryptPasswordPayload(req);
+    const token = req.body.token;
+    const newPassword = secrets.newPassword;
     if (!token || !newPassword) {
       return res.status(400).json({ error: "Reset token and new password are required." });
     }
@@ -199,7 +303,9 @@ router.get("/me", requireAuth, async (req, res, next) => {
 // ─── POST /api/auth/change-password ──────────────────────────────────────────
 router.post("/change-password", requireAuth, async (req, res, next) => {
   try {
-    const { currentPassword, newPassword } = req.body;
+    const secrets = await decryptPasswordPayload(req);
+    const currentPassword = secrets.currentPassword;
+    const newPassword = secrets.newPassword;
 
     if (!newPassword) {
       return res.status(400).json({ error: "New password is required." });

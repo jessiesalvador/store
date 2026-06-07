@@ -666,7 +666,7 @@ els.resetPasswordForm.addEventListener("submit", async (event) => {
   }
 
   try {
-    const data = await api.post("/auth/reset-password", { token: resetToken, newPassword });
+    const data = await api.resetPassword(resetToken, newPassword);
     els.resetPasswordModal.close();
     els.resetPasswordForm.reset();
     history.replaceState({}, "", location.pathname);
@@ -679,11 +679,9 @@ els.resetPasswordForm.addEventListener("submit", async (event) => {
 els.loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
+  const password = form.get("password");
   try {
-    const data = await api.post("/auth/login", {
-      email:    form.get("email").trim().toLowerCase(),
-      password: form.get("password"),
-    });
+    const data = await api.login(form.get("email").trim().toLowerCase(), password);
     if (data.user.role !== "store-admin") {
       showToast("This login is for store admins only.");
       await api.post("/auth/logout", {});
@@ -693,6 +691,8 @@ els.loginForm.addEventListener("submit", async (event) => {
     await unlockAdmin();
   } catch (err) {
     showToast(err.message || "Invalid email or password.");
+  } finally {
+    event.currentTarget.elements.password.value = "";
   }
 });
 
@@ -718,9 +718,7 @@ els.changePasswordForm.addEventListener("submit", async (event) => {
   }
 
   try {
-    await api.post("/auth/change-password", {
-      newPassword:     newPw,
-    });
+    await api.changePassword({ newPassword: newPw });
     currentUser.mustChangePassword = false;
     els.changePasswordModal.close();
     els.changePasswordForm.reset();
