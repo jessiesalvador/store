@@ -32,13 +32,7 @@ jobs:
         run: npm install -g firebase-tools
 
       - name: Deploy to Firebase Production
-        run: |
-          echo $FIREBASE_SERVICE_ACCOUNT | base64 -d > /tmp/service-account.json
-          firebase deploy \
-          --project=jsstore-b6d73 \
-          --only hosting,functions
-        env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: firebase deploy --project "$FIREBASE_PROJECT_ID" --only hosting,functions,firestore --non-interactive --force
 
       - name: Create deployment status check
         if: success()
