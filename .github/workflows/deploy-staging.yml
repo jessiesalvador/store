@@ -5,6 +5,12 @@ on:
     branches:
       - jessiesalvador-patch-1
   workflow_dispatch:
+    inputs:
+      seed_data:
+        description: "Seed default staging stores, items, and admin users after deploy"
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: firebase-staging-${{ github.ref }}
@@ -50,3 +56,13 @@ jobs:
 
       - name: Deploy to Firebase staging
         run: firebase deploy --project "$FIREBASE_PROJECT_ID" --only hosting,functions,firestore --non-interactive --force
+
+      - name: Seed staging data
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.seed_data }}
+        run: npm run seed
+        working-directory: store2
+        env:
+          SUPER_ADMIN_EMAIL: ${{ secrets.STAGING_SUPER_ADMIN_EMAIL }}
+          SUPER_ADMIN_PASSWORD: ${{ secrets.STAGING_SUPER_ADMIN_PASSWORD }}
+          STORE_ADMIN_EMAIL: ${{ secrets.STAGING_STORE_ADMIN_EMAIL }}
+          STORE_ADMIN_PASSWORD: ${{ secrets.STAGING_STORE_ADMIN_PASSWORD }}
